@@ -1,0 +1,50 @@
+backend "<%= scope['vault::backend'] %>" {
+  advertise_addr = "<%= scope['vault::advertise_scheme'] %>://<%= scope['vault::advertise_addr'] %>:<%= scope['vault::advertise_port'] %>"
+<%- if scope['vault::backend'] == 'consul' then -%>
+  path = "<%= scope['vault::backend_path'] %>"
+  address = "<%= scope['vault::backend_address'] %>"
+  scheme = "<%= scope['vault::backend_scheme'] %>"
+  datacenter = "<%= scope['vault::backend_datacenter'] %>"
+  token = "<%= scope['vault::backend_token'] %>"
+<%- elsif scope['vault::backend'] == 'etcd' then -%>
+  path = "<%= scope['vault::backend_path'] %>"
+  address = "<%= scope['vault::backend_address'] %>"
+<%- elsif scope['vault::backend'] == 'zookeeper' then -%>
+  path = "<%= scope['vault::backend_path'] %>"
+  address = "<%= scope['vault::backend_address'] %>"
+<%- elsif scope['vault::backend'] == 's3' then -%>
+  bucket = "<%= scope['vault::backend_bucket'] %>"
+  access_key = "<%= scope['vault::backend_access_key'] %>"
+  secret_key = "<%= scope['vault::backend_secret_key'] %>"
+  session_token = "<%= scope['vault::backend_token'] %>"
+  region = "<%= scope['vault::backend_region'] %>"
+<%- elsif scope['vault::backend'] == 'mysql' then -%>
+  username = "<%= scope['vault::backend_username'] %>"
+  password = "<%= scope['vault::backend_password'] %>"
+  address = "<%= scope['vault::backend_address'] %>"
+  database = "<%= scope['vault::backend_database'] %>"
+  table = "<%= scope['vault::backend_table'] %>"
+<%- elsif scope['vault::backend'] == 'inmem' then -%>
+<%- else # file backend -%>
+  path = "<%= scope['vault::backend_path'] %>"
+<%- end -%>
+}
+
+listener "<%= scope['vault::listener'] %>" {
+address = "<%= scope['vault::listener_address'] %>:<%= scope['vault::listener_port'] %>"
+  tls_cert_file = "/etc/vault/ssl/vault.cert.pem"
+  tls_key_file = "/etc/vault/ssl/vault.key.pem"
+}
+<%- if scope['vault::stats_type'] then -%>
+
+telemetry {
+  <%- if scope['vault:stats_type'] == 'statsite' then -%>
+  statsite_address = "<%= scope['vault::stats_address'] %>"
+  <%- else -%>
+  statsd_address = "<%= scope['vault::stats_address'] %>"
+  <%- end -%>
+  <%- if scope['vault::stats_host_prefix'] == false then -%>
+  disable_hostname = true
+  <%- end -%>
+}
+<%- end -%>

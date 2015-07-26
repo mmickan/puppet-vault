@@ -1,0 +1,7 @@
+/.vagrant/
+/vendor/
+/bin/
+/coverage/
+/pkg/
+/spec/fixtures/
+/log/

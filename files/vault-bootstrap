@@ -1,0 +1,518 @@
+#!/bin/bash
+#
+# vault-bootstrap
+#
+# Safely bootstrap a Vault instance, including unsealing it and providing
+# unseal keys to a list of users.
+#
+# Parameters to the script after a double hyphen ("--") are the usernames
+# corresponding to the accounts that encrypted keys and key shards will be
+# saved to.  e.g.:
+#
+#  vault-bootstrap -- john jane bob sigfried roy
+#
+#  Each account listed must have an ~/.ssh/id_rsa.pub or
+#  ~/.ssh/authorized_keys file containing at least one ssh public key.
+#
+# The number of key shares for unsealing Vault will be equal to the number
+# of users specified on the command line.  The key threshold is derived from
+# that as follows:
+#
+# - 1 key share          => 1 key required to unseal
+# - 2 key shares         => 1 key required to unseal
+# - 3 key shares         => 2 keys required to unseal
+# - 4 key shares         => 2 keys required to unseal
+# - 5 or more key shares => 3 keys required to unseal
+#
+# It is recommended that a minimum of 5 users be specified on the command
+# line for production deployments.
+#
+# The basic steps followed are:
+#
+# - create certificate authority root certificate and key with long expiry
+# - deploy CA root certificate for "update-ca-certificates" as
+#   /usr/local/share/ca-certificates/ca-root.crt
+# - create intermediate root certificate and key (shorter expiry time)
+# - deploy intermediate root certificate for "update-ca-certificates" as
+#   /usr/local/share/ca-certificates/intermediate-root.crt
+# - run update-ca-certificates script
+# - create server certificate and key for vault (signed by intermediate
+#   root)
+# - deploy server certificate and key as /etc/vault/ssl/vault.cert.pem and
+#   /etc/vault/ssl/vault.key.pem
+# - start vault
+# - initialise vault and capture the output (root token, unseal keys)
+# - unseal vault
+# - encrypt the root token and key shards (one shard per user) and place in
+#   users' home directory
+# - mount the PKI backend and configure it with the intermediate certificate
+#   and key
+# - place the CA root certificate and key in Vault at secret/pki/ca_root
+# - securely remove CA root key
+# - place the CA intermediate certificate and key in Vault at
+#   secret/pki/ca_intermediate
+# - seecurely remove CA intermediate key
+#
+# At this point, the users named on the command line should download the
+# encrypted files placed in their home direcories and securely erase them
+# from the server.  They can be decrypted on a system that contains the
+# relevant private key in ~/.ssh/id_rsa with:
+#
+# $ cat vault_initial_root_token | openssl rsautl -decrypt -inkey ~/.ssh/id_rsa
+# $ cat vault_unseal_key | openssl rsautl -decrypt -inkey ~/.ssh/id_rsa
+#
+# It is recommended that they be transferred directly to a USB stick from
+# the server, and that the USB stick use an encrypted filesystem.  This
+# places them behind two levels of encryption.
+#
+# It is also recommended that the CA root key be retrieved from Vault,
+# encrypted, and placed alongside the unseal key and initial root token on
+# the encrypted USB stick:
+#
+# $ openssl rsa -aes256 -out /path/to/encrypted/usb/stick/ca.key.pem
+# <paste unencrypted key into terminal, then hit enter if not prompted for pass phrase immediately>
+#
+# Once all operators have done this, the CA root key should be removed from
+# Vault (note that "unset HISTFILE" is bash-specific; if you use a different
+# shell you'll likely need to use a different command to prevent command
+# history for the session being saved):
+#
+# bash$ unset HISTFILE
+# bash$ export VAULT_TOKEN='XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
+# bash$ vault write secret/pki/ca_root certificate=@/etc/ssl/ca/certs/ca.cert.pem key=
+#
+# The same process could conceivably be followed with the CA intermediate
+# key, or it could simply be deleted given that Vault's PKI secret backend,
+# which is already configured, should be the only thing you need in order to
+# generate signed certificates and their keys.
+#
+######################################################################
+# Script configuration
+######################################################################
+
+version=0.1.0
+
+declare -a usernames
+declare -a keys
+
+# default is no subjectAltName, but the environment variable must exist or
+# openssl will complain of the variable having no value
+export ALTNAME=''
+
+######################################################################
+# Functions
+######################################################################
+
+usage(){
+  cat <<EOF
+
+  Usage: $0 [<options>] -- username ...
+
+  --version      Show the vault-bootstrap version number
+  --help         Display this mess
+  --force        Overwrite existing SSL keys (but note that this doesn't
+                 remove data from vault to allow a new "vault init" - it
+                 will fail if vault has previously been initialised)
+  --altnames     Subject Alternate Names for Vault's SSL certificate
+EOF
+
+  exit 1
+}
+
+version(){
+  cat <<EOF
+  vault-bootstrap version $version
+
+EOF
+
+  exit 0
+}
+
+log(){ echo -e "\e[32m\e[1m--> ${1}...\e[0m"; }
+warn(){ echo -e "\e[33m\e[1mWARNING: ${1}\e[0m"; }
+error(){ echo -e "\e[31m\e[1mERROR: ${1}\e[0m"; }
+fatal(){ echo -e "\e[31m\e[1mFATAL: ${1}\e[0m"; exit 1; }
+
+######################################################################
+# Script start
+######################################################################
+
+PARSED_OPTIONS=$(getopt -n "$0" -o hvfa --long "help,version,force,altnames" -- "$@")
+
+if [ $? -ne 0 ]; then
+  usage
+fi
+
+eval set -- "$PARSED_OPTIONS"
+while true; do
+  case "$1" in
+    -h|--help)
+      usage;;
+    -v|--version)
+      version;;
+    -f|--force)
+      force=1;;
+    -a|--altnames)
+      altnames=$1;;
+    --)
+      shift
+      break;;
+    *)
+      error "unknown option $1"
+      usage;;
+  esac
+done
+
+usernames=( $* )
+
+key_shares=${#usernames[@]}
+if [ $key_shares -eq 0 ]; then
+  fatal "At least one user account is required"
+elif [ $key_shares -lt 5 ]; then
+  warn "Less than 5 key shares is not recommended"
+  key_threshold=$((($key_shares+1)/2))
+else
+  key_threshold=3
+fi
+
+# default altnames is just "IP:127.0.0.1".  To allow access to vault using
+# other host names or IP addresses, set this to a comma-separated list of
+# IP:<address> and DNS:<name> entries.  IP:127.0.0.1 will be added to the
+# list if it's not already included - this allows local access without
+# setting the VAULT_ADDR environment variable
+altnames=${altnames:-IP:127.0.0.1}
+if ! echo $altnames | grep -qs 'IP:127.0.0.1'; then
+  altnames="${altnames}, IP:127.0.0.1"
+fi
+
+# validate that all userids passed in have ssh public keys
+for username in "${usernames[@]}"; do
+  if [ -f "/home/${username}/.ssh/id_rsa.pub.pem" ]; then
+    log "Using existing encryption key for user '${username}'"
+  elif [ -f "/home/${username}/.ssh/id_rsa.pub" ]; then
+    log "Generating id_rsa.pub.pem from id_rsa.pub for user '${username}'"
+    ssh-keygen -f "/home/${username}/.ssh/id_rsa.pub" -e -m pem \
+      | openssl rsa -RSAPublicKey_in -pubout -out "/home/${username}/.ssh/id_rsa.pub.pem"
+  elif [ -f "/home/${username}/.ssh/authorized_keys" ]; then
+    log "Generating id_rsa.pub.pem from first authorised key for user '${username}'"
+    head -1 "/home/${username}/.ssh/authorized_keys" > "/home/${username}/.ssh/id_rsa.pub"
+    ssh-keygen -f "/home/${username}/.ssh/id_rsa.pub" -e -m pem \
+      | openssl rsa -RSAPublicKey_in -pubout -out "/home/${username}/.ssh/id_rsa.pub.pem"
+  else
+    fatal "Unable to find ssh public key for user '${username}'"
+  fi
+done
+
+# Stop users from doing silly things (unless --force is enabled, then the
+# user gets to keep both pieces if they break it)
+if [[ $force -eq 1 ]]; then
+  rm -f /etc/ssl/ca/{private/ca.key.pem,certs/ca.cert.pem}
+  rm -f /etc/ssl/ca/intermediate/{private/intermediate.key.pem,certs/{vault,intermediate}.cert.pem}
+  rm -f /etc/vault/ssl/vault.{cert,key}.pem
+fi
+
+for file in /etc/ssl/ca/{private/ca.key.pem,certs/ca.cert.pem,intermediate/{private/intermediate.key.pem,certs/intermediate.cert.pem}}; do
+  if [ -e $file ]; then
+    fatal "$file already exists - use --force to overwrite existing files"
+  fi
+done
+
+for dir in /etc/ssl/ca/{,private,certs,crl,newcerts,intermediate/{,certs,crl,csr,newcerts,private}}; do
+  if [[ -d $dir && $force -ne 1 ]]; then
+    warn "${dir} already exists"
+  fi
+done
+
+# Build out the directory structure for the certificate authority
+mkdir -p /etc/ssl/ca
+chmod 0755 /etc/ssl/ca
+cd /etc/ssl/ca
+
+mkdir -p private certs crl newcerts
+chmod 0700 private
+chmod 0755 certs crl newcerts
+touch index.txt
+echo 1000 > serial
+echo 1000 > crlnumber
+
+mkdir -p intermediate
+chmod 0755 intermediate
+mkdir -p intermediate/{certs,crl,csr,newcerts,private}
+chmod 0700 intermediate/private
+chmod 0755 intermediate/{certs,crl,csr,newcerts}
+touch intermediate/index.txt
+echo 1000 > intermediate/serial
+echo 1000 > intermediate/crlnumber
+
+cat >openssl.cnf <<'EOF'
+[ca]
+# Options for the 'ca' rool ('man ca')
+default_ca = CA_default
+
+[CA_default]
+# Directory and file locations
+dir              = /etc/ssl/ca
+certs            = $dir/certs
+crl_dir          = $dir/crl
+new_certs_dir    = $dir/newcerts
+database         = $dir/index.txt
+serial           = $dir/serial
+RANDFILE         = $dir/private/.rand
+
+# The root key and root certificate
+private_key      = $dir/private/ca.key.pem
+certificate      = $dir/certs/ca.cert.pem
+
+# For certificate revocation lists
+crlnumber        = $dir/crlnumber
+crl              = $dir/crl/ca.crl.pem
+crl_extensions   = crl_ext
+default_crl_days = 30
+
+# SHA-1 is deprecated, so use SHA-2 instead
+default_md       = sha256
+
+name_opt         = ca_default
+cert_opt         = ca_default
+default_days     = 375
+preserve         = no
+policy           = policy_strict
+copy_extensions  = copyall
+
+[policy_strict]
+# The root CA should only sign intermediate certificates that match.  See
+# the POLICY FORMAT section of 'man ca'
+countryName            = optional
+stateOrProvinceName    = optional
+organizationName       = optional
+organizationalUnitName = optional
+commonName             = supplied
+emailAddress           = optional
+
+[policy_loose]
+# Allow the intermediate CA to sign a more diverse range of certifications.
+# See the POLICY FORMAT section of 'man ca'
+countryName            = optional
+stateOrProvinceName    = optional
+localityName           = optional
+organizationName       = optional
+organizationalUnitName = optional
+commonName             = supplied
+emailAddress           = optional
+
+[req]
+# Options for the 'req' tool ('man req')
+default_bits       = 4096
+distinguished_name = req_distinguished_name
+string_mask        = utf8only
+
+# SHA-1 is deprecated, so use SHA-2 instead
+default_md         = sha256
+
+# Extension to add when the -x509 option is used
+x509_extensions    = v3_ca
+
+[req_distinguished_name]
+# See <https://en.wikipedia.org/wiki/Certificate_signing_request>
+countryName                    = Country Name (2 letter code)
+stateOrProvinceName            = State or Province Name
+localityName                   = Locality Name
+0.organizationName             = Organisation Name
+organizationalUnitName         = Organisational Unit Name
+commonName                     = Common Name
+emailAddress                   = Email Address
+
+# Optionally, specify some defaults
+countryName_default            = AU
+stateOrProvinceName_default    = South Australia
+localityName_default           = North Adelaide
+0.organizationName_default     = Blackboard
+organizationalUnitName_default = NetSpot
+emailAddress_default           = ops@netspot.com.au
+
+[v3_req]
+subjectAltName = $ENV::ALTNAME
+
+[v3_ca]
+# Extensions for a typical CA ('man x509v3_config')
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints       = critical, CA:true
+keyUsage               = critical, digitalSignature, cRLSign, keyCertSign
+
+[v3_intermediate_ca]
+# Extensions for a typical intermediate CA ('man x509v3_config')
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints       = critical, CA:true, pathlen:0
+keyUsage               = critical, digitalSignature, cRLSign, keyCertSign
+
+[usr_cert]
+# Extensions for client certificates ('man x509v4_config')
+basicConstraints       = CA:FALSE
+nsCertType             = client, email
+nsComment              = "OpenSSL Generate Client Certificate"
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid,issuer
+keyUsage               = critical, nonRepudiation, digitalSignature, keyEncipherment
+extendedKeyUsage       = clientAuth, emailProtection
+
+[server_cert]
+# Extensions for server certificates ('man x509v3_config')
+basicConstraints       = CA:FALSE
+nsCertType             = server
+nsComment              = "OpenSSL Generate Server Certificate"
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid,issuer:always
+keyUsage               = critical, digitalSignature, keyEncipherment
+extendedKeyUsage       = serverAuth
+
+[crl_ext]
+# Extensions for CRLs ('man x509v3_config')
+authorityKeyIdentidier = keyid:always
+
+[ocsp]
+# Extensions for OCSP signing certificates ('man ocsp')
+basicConstraints       = CA:FALSE
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid,issuer
+keyUsage               = critical, digitalSignature
+extendedKeyUsage       = critical, OCSPSigning
+EOF
+
+cat openssl.cnf | sed \
+  -e '/^dir\s*=/s|/etc/ssl/ca|/etc/ssl/ca/intermediate|' \
+  -e '/^private_key\s*=/s|ca\.key\.pem|intermediate.key.pem|' \
+  -e '/^certificate\s*=/s|ca\.cert\.pem|intermediate.cert.pem|' \
+  -e '/^crl\s*=/s|ca\.crl\.pem|intermediate.crl.pem|' \
+  -e '/^policy\s*=/s|policy_strict|policy_loose|' \
+  > intermediate/openssl.cnf
+
+# create CA root certificate and key (20 year expiry)  TODO: embed CRL that
+# references Vault by URL
+log "Generating CA root certificate and key"
+
+openssl genrsa -out private/ca.key.pem 4096
+chmod 0400 private/ca.key.pem
+
+openssl req -config openssl.cnf \
+  -subj '/CN=Certificate Authority Root/emailAddress=ops@netspot.com.au' \
+  -key private/ca.key.pem \
+  -new -x509 -days 7300 -sha256 -extensions v3_ca \
+  -out certs/ca.cert.pem
+chmod 0444 certs/ca.cert.pem
+
+# create intermediate root certificate and key (shorter expiry time)  TODO:
+# embed CRL that references Vault by URL
+log "Generating CA intermediate certificate and key"
+
+openssl genrsa -out intermediate/private/intermediate.key.pem 4096
+chmod 0400 intermediate/private/intermediate.key.pem
+
+openssl req -config intermediate/openssl.cnf -new -sha256 \
+  -subj '/CN=Certificate Authority Intermediate/emailAddress=ops@netspot.com.au' \
+  -key intermediate/private/intermediate.key.pem \
+  -out intermediate/csr/intermediate.csr.pem
+
+openssl ca -config openssl.cnf -batch -extensions v3_intermediate_ca \
+  -days 3650 -notext -md sha256 \
+  -in intermediate/csr/intermediate.csr.pem \
+  -out intermediate/certs/intermediate.cert.pem
+chmod 0444 intermediate/certs/intermediate.cert.pem
+
+cat \
+  intermediate/certs/intermediate.cert.pem \
+  certs/ca.cert.pem \
+  > intermediate/certs/ca-chain.cert.pem
+chmod 0444 intermediate/certs/ca-chain.cert.pem
+
+# deploy CA certificates to system
+cp certs/ca.cert.pem /usr/local/share/ca-certificates/ca-root.crt
+cp intermediate/certs/intermediate.cert.pem /usr/local/share/ca-certificates/ca-intermediate.crt
+update-ca-certificates
+
+# create server certificate and key for vault
+log "Generating server certificate and key for Vault"
+
+openssl genrsa -out /etc/vault/ssl/vault.key.pem
+chmod 0400 /etc/vault/ssl/vault.key.pem
+
+env ALTNAME=$altnames \
+  openssl req -config intermediate/openssl.cnf \
+  -reqexts v3_req \
+  -subj '/CN=vault' \
+  -key /etc/vault/ssl/vault.key.pem \
+  -new -sha256 -out intermediate/csr/vault.csr.pem
+
+openssl ca -config intermediate/openssl.cnf -batch \
+  -extensions server_cert -days 375 -notext -md sha256 \
+  -in intermediate/csr/vault.csr.pem \
+  -out intermediate/certs/vault.cert.pem
+chmod 0444 intermediate/certs/vault.cert.pem
+
+cp intermediate/certs/vault.cert.pem /etc/vault/ssl/vault.cert.pem
+
+# start up vault - note that we assume vault is not already running and
+# avoid a restart here.  Restarting will seal an active vault, which we want
+# to avoid doing by accident.
+service vault start || fatal "Unable to start Vault"
+
+# initialise vault and capture the output (root token, unseal key shards)
+sleep 3  # give Vault a moment to complete startup (TODO: use a proper retry loop)
+if vault status 2>&1 | grep -qs 'server is not yet initialized'; then
+  vault_init=`vault init -key-shares=$key_shares -key-threshold=$key_threshold`
+  for i in $(seq 1 $key_shares); do
+    keys[$((i-1))]=`echo "$vault_init" | grep "^Key ${i}: " | awk '{print $3}'`
+  done
+  token=`echo "$vault_init" | grep '^Initial Root Token:' | awk '{print $4}'`
+  export VAULT_TOKEN="$token"
+else
+  fatal "Unable to find an uninitialised Vault running - bootstrap aborted"
+fi
+
+# TODO: ensure we have the expected keys and token.  Fatal error if we don't
+
+# unseal vault
+log "Unsealing vault"
+for i in $(seq 1 $key_threshold); do
+  curl \
+    -s \
+    -o /dev/null \
+    --cacert /etc/ssl/ca/intermediate/certs/ca-chain.cert.pem \
+    -X PUT \
+    -H "X-Vault-Token: $token" \
+    -d "{\"key\":\"${keys[$((i-1))]}\"}" \
+    https://127.0.0.1:8200/v1/sys/unseal
+done
+
+# encrypt the root token and key shards (one shard per user) and place in
+# each user's home directory
+for i in $(seq 0 $((key_shares-1))); do
+  echo "${keys[$i]}" | \
+    openssl rsautl -encrypt -pubin -inkey "/home/${usernames[$i]}/.ssh/id_rsa.pub.pem" \
+    > "/home/${usernames[$i]}/vault_unseal_key"
+  echo "$token" | \
+    openssl rsautl -encrypt -pubin -inkey "/home/${usernames[$i]}/.ssh/id_rsa.pub.pem" \
+    > "/home/${usernames[$i]}/vault_initial_root_token"
+done
+
+# mount PKI backend and deploy the intermediate certificate and key to it
+vault mount pki
+cat \
+  /etc/ssl/ca/intermediate/certs/intermediate.cert.pem \
+  /etc/ssl/ca/intermediate/private/intermediate.key.pem \
+  | vault write pki/config/ca pem_bundle="-"
+
+# store the CA root certificate/key pair securely and erase the key from disk
+vault write secret/pki/ca_root \
+  certificate=@/etc/ssl/ca/certs/ca.cert.pem \
+  key=@/etc/ssl/ca/private/ca.key.pem
+# note that shred is not effective on all filesystem types - see 'man shred'
+shred --zero --remove /etc/ssl/ca/private/ca.key.pem
+
+# store the CA intermediate certificate/key pair securely and erase the key from disk
+vault write secret/pki/ca_intermediate \
+  certificate=@/etc/ssl/ca/intermediate/certs/intermediate.cert.pem \
+  key=@/etc/ssl/ca/intermediate/private/intermediate.key.pem
+# note that shred is not effective on all filesystem types - see 'man shred'
+shred --zero --remove /etc/ssl/ca/intermediate/private/intermediate.key.pem

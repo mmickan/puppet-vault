@@ -1,0 +1,12 @@
+HOSTS:
+  scientific-6-6:
+    roles:
+      - default
+    platform: el-6-x86_64
+    box: scientific-6-6
+    hypervisor: vagrant
+
+CONFIG:
+  log_level: verbose
+  color: false
+  type: foss

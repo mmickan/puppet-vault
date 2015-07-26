@@ -1,0 +1,11 @@
+# this file is managed by puppet - do not make changes manually
+
+These are the variables used by the puppet module <%= @module_name %%>
+
+$repo            = <%= scope.lookupvar('vault::repo') %%>
+$package_name    = <%= scope.lookupvar('vault::package_name') %%>
+$config_dir      = <%= scope.lookupvar('vault::config_dir') %%>
+$config_template = <%= scope.lookupvar('vault::config_template') %%>
+$firewall        = <%= scope.lookupvar('vault::firewall') %%>
+$metric          = <%= scope.lookupvar('vault::metric') %%>
+$debug           = <%= scope.lookupvar('vault::debug') %%>
