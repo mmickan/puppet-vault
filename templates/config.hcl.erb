@@ -2,22 +2,36 @@ backend "<%= scope['vault::backend'] %>" {
   advertise_addr = "<%= scope['vault::advertise_scheme'] %>://<%= scope['vault::advertise_addr'] %>:<%= scope['vault::advertise_port'] %>"
 <%- if scope['vault::backend'] == 'consul' then -%>
   path = "<%= scope['vault::backend_path'] %>"
+  <%- if scope['vault::backend_address'] -%>
   address = "<%= scope['vault::backend_address'] %>"
+  <%- end -%>
   scheme = "<%= scope['vault::backend_scheme'] %>"
+  <%- if scope['vault::backend_datacenter'] -%>
   datacenter = "<%= scope['vault::backend_datacenter'] %>"
+  <%- end -%>
+  <%- if scope['vault::backend_token'] -%>
   token = "<%= scope['vault::backend_token'] %>"
+  <%- end -%>
 <%- elsif scope['vault::backend'] == 'etcd' then -%>
   path = "<%= scope['vault::backend_path'] %>"
+  <%- if scope['vault::backend_address'] -%>
   address = "<%= scope['vault::backend_address'] %>"
+  <%- end -%>
 <%- elsif scope['vault::backend'] == 'zookeeper' then -%>
   path = "<%= scope['vault::backend_path'] %>"
+  <%- if scope['vault::backend_address'] -%>
   address = "<%= scope['vault::backend_address'] %>"
+  <%- end -%>
 <%- elsif scope['vault::backend'] == 's3' then -%>
   bucket = "<%= scope['vault::backend_bucket'] %>"
   access_key = "<%= scope['vault::backend_access_key'] %>"
   secret_key = "<%= scope['vault::backend_secret_key'] %>"
+  <%- if scope['vault::backend_token'] -%>
   session_token = "<%= scope['vault::backend_token'] %>"
+  <%- end -%>
+  <%- if scope['vault::backend_region'] -%>
   region = "<%= scope['vault::backend_region'] %>"
+  <%- end -%>
 <%- elsif scope['vault::backend'] == 'mysql' then -%>
   username = "<%= scope['vault::backend_username'] %>"
   password = "<%= scope['vault::backend_password'] %>"

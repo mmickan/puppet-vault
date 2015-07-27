@@ -104,7 +104,7 @@
 #   String.  The address of the backend being used.  Used by several
 #   backends, see the Consul documentation for your backend for example
 #   settings.
-#   Default: undef
+#   Default: false
 #
 # [*backend_scheme*]
 #   String.  Protocol for talking to the Consul backend.
@@ -113,29 +113,29 @@
 #
 # [*backend_datacenter*]
 #   String.  The datacenter to write to (Consul backend).
-#   Default: undef
+#   Default: false
 #
 # [*backend_token*]
 #   String.  An access token to use to write data to Consul backend, or
 #   session toekn to use to write to the S3 backend.
-#   Default: undef
+#   Default: false
 #
 # [*backend_bucket*]
 #   String.  Name of the S3 bucket to use.  This is _required_ for the S3
 #   backend.
-#   Default: undef
+#   Default: false
 #
 # [*backend_access_key*]
 #   String.  AWS access key to use.  This is _required_ for the S3 backend.
-#   Default: undef
+#   Default: false
 #
 # [*backend_secret_key*]
 #   String.  AWS secret key to use.  This is _required_ for the S3 backend.
-#   Default: undef
+#   Default: false
 #
 # [*backend_region*]
 #   String.  AWS region to use.
-#   Default: undef
+#   Default: false
 #
 # [*backend_username*]
 #   String.  MySQL username to connect with.  This is _required_ for the
@@ -145,7 +145,7 @@
 # [*backend_password*]
 #   String.  MySQL password to connect with.  THis is _required_ for the
 #   MySQL backend.
-#   Default: undef
+#   Default: false
 #
 # [*backend_database*]
 #   String.  Name of the MySQL database to use (MySQL backend).
@@ -166,17 +166,17 @@
 # [*tls_cert_file*]
 #   String.  Path to an existing certificate for TLS.  If not specified, a
 #   certificate and key will be automatically generated.
-#   Default: undef
+#   Default: false
 #
 # [*tls_key_file*]
 #   String.  Path to an existing private key for TLS.  If not specified, a
 #   certificate and key will be automatically generated.
-#   Default: undef
+#   Default: false
 #
 # [*stats_type*]
-#   String.  Protocol for telemetry data.  If undef, telemetry will not be
+#   String.  Protocol for telemetry data.  If false, telemetry will not be
 #   activated.
-#   Default: undef
+#   Default: false
 #   Valid values: statsite, statsd
 #
 # [*stats_address*]
@@ -215,23 +215,23 @@ class vault(
   $advertise_addr     = $::ipaddress,
   $advertise_port     = '8200',
   $backend_path       = '/var/lib/vault',
-  $backend_address    = undef,
+  $backend_address    = false,
   $backend_scheme     = 'http',
-  $backend_datacenter = undef,
-  $backend_token      = undef,
-  $backend_bucket     = undef,
-  $backend_access_key = undef,
-  $backend_secret_key = undef,
-  $backend_region     = undef,
+  $backend_datacenter = false,
+  $backend_token      = false,
+  $backend_bucket     = false,
+  $backend_access_key = false,
+  $backend_secret_key = false,
+  $backend_region     = false,
   $backend_username   = 'vault',
-  $backend_password   = undef,
+  $backend_password   = false,
   $backend_database   = 'vault',
   $backend_table      = 'vault',
   $listener_address   = '0.0.0.0',
   $listener_port      = '8200',
   $tls_cert_file      = undef,
   $tls_key_file       = undef,
-  $stats_type         = undef,
+  $stats_type         = false,
   $stats_address      = '127.0.0.1:8125',
   $stats_host_prefix  = true,
 ) {

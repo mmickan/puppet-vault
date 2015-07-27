@@ -84,10 +84,18 @@ Currently this module only supports Upstart, so it's mostly limited to
 Ubuntu.  Support for other operating systems and distributions should be a
 simple matter; most of the basic structure is already in place.
 
+Automated tests use the file backend only.  The Consul backend is in active
+use, but other backends are not well tested.
+
 ##Development
 
-Pull requests are welcome, and even more so if they come with passing test
-cases.
+Contributions are welcome.  Open an
+[issue](https://github.com/mmickan/puppet-vault/issues) or
+[fork](https://github.com/mmickan/puppet-vault/fork) and open a
+[pull request](https://github.com/mmickan/puppet-vault/pulls).  Passing
+tests are appreciated with pull requests, but not a hard requirement.
+Please ensure your commit message clearly explains the problem your patch
+solves.
 
 ##Contributors
 
