@@ -459,8 +459,16 @@ cp intermediate/certs/vault.cert.pem /etc/vault/ssl/vault.cert.pem
 # to avoid doing by accident.
 service vault start || fatal "Unable to start Vault"
 
+# wait for Vault to complete startup
+for i in {1..30}; do
+  if vault status 2>&1 | grep -qs 'server is not yet initialized'; then
+    break
+  fi
+  log "Waiting for Vault to start"
+  sleep 2
+done
+
 # initialise vault and capture the output (root token, unseal key shards)
-sleep 3  # give Vault a moment to complete startup (TODO: use a proper retry loop)
 if vault status 2>&1 | grep -qs 'server is not yet initialized'; then
   vault_init=`vault init -key-shares=$key_shares -key-threshold=$key_threshold`
   for i in $(seq 1 $key_shares); do
