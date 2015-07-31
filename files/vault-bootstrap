@@ -516,3 +516,19 @@ vault write secret/pki/ca_intermediate \
   key=@/etc/ssl/ca/intermediate/private/intermediate.key.pem
 # note that shred is not effective on all filesystem types - see 'man shred'
 shred --zero --remove /etc/ssl/ca/intermediate/private/intermediate.key.pem
+
+# TODO: minimise the actions below to just bootstrap enough for Puppet to
+# take on the remaining configuration, and create appropriate Puppet defined
+# types to facilitate using it for the remaining configuration.
+
+# create pki role allowing generation of certificates for consul domain
+vault write pki/roles/consul \
+  allowed_base_domain=consul \
+  allow_subdomains=true \
+  lease_max=168h   # == 1 week
+
+cat <<EOF | vault policy-write deploy-ssl-certificate -
+path "pki/issue/consul" {
+  policy = "write"
+}
+EOF

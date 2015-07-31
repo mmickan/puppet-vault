@@ -1,0 +1,202 @@
+#!/bin/bash
+#
+# deploy-ssl-certificate
+#
+# Generate a new SSL certificate and key pair, deploy them to a given
+# location and optionally reload the process(es) that use them.
+#
+######################################################################
+# Script configuration
+######################################################################
+
+version=0.1.0
+app_id='6D058FB8-2F63-48EF-A1E9-B91627478E67'
+
+######################################################################
+# Functions
+######################################################################
+
+usage(){
+  cat <<EOF
+  Usage: $0 [<options>]
+
+  --version                        Show the version of this script
+  --help                           Display this mess
+  --show-app-id                    Output this application's app-id (for
+                                   Vault auth to App ID auth backend)
+  --role pki-role                  Use pki-role as auth role for Vault
+  --common_name cn                 The common name for the SSL cert
+  --alt_names "name.domain"        Comma-separated list of subject altnames
+  --ip_sans "1.2.3.4,5.6.7.8"      Comma-separated list of IP subject altnames
+  --lease 72h                      How long the certificate will be valid for
+  --certfile /path/to/cert         Path to write certificate to
+  --keyfile /path/to/key           Path to write key to
+  --post_rotate "/path/script opt" Command to run after key/cert generation
+
+EOF
+
+  exit 1
+}
+
+version(){
+  cat <<EOF
+  deploy-ssl-certificate verion $version
+
+EOF
+
+  exit 0
+}
+
+show_app_id(){
+  echo -n $app_id
+
+  exit 0
+}
+
+log(){ echo -e "\e[32m\e[1m--> ${1}...\e[0m"; }
+warn(){ echo -e "\e[33m\e[1mWARNING: ${1}\e[0m"; }
+error(){ echo -e "\e[31m\e[1mERROR: ${1}\e[0m"; }
+fatal(){ echo -e "\e[31m\e[1mFATAL: ${1}\e[0m"; exit 1; }
+
+######################################################################
+# Script start
+######################################################################
+
+PARSED_OPTIONS=$(getopt -n "$0" -o hvsr:n:a:i:l:c:k:p: --long "help,version,show-app-id,role:,common_name:,alt_names:,ip_sans:,lease:,certfile:,keyfile:,post_rotate:" -- "$@")
+
+if [ $? -ne 0 ]; then
+  usage
+fi
+
+eval set -- "$PARSED_OPTIONS"
+while true; do
+  case "$1" in
+    -h|--help)
+      usage;;
+    -v|--version)
+      version;;
+    -s|--show-app-id)
+      show_app_id;;
+    -r|--role)
+      role=$2
+      shift 2;;
+    -n|--common_name)
+      common_name=$2
+      shift 2;;
+    -a|--alt_names)
+      alt_names=$2
+      shift 2;;
+    -i|--ip_sans)
+      ip_sans=$2
+      shift 2;;
+    -l|--lease)
+      lease=$2
+      shift 2;;
+    -c|--certfile)
+      certfile=$2
+      shift 2;;
+    -k|--keyfile)
+      keyfile=$2
+      shift 2;;
+    -p|--post_rotate)
+      post_rotate=$2
+      shift 2;;
+    --)
+      shift
+      break;;
+    *)
+      error "unknown option $1"
+      usage;;
+  esac
+done
+
+
+vault_app_id=$app_id
+
+vault_user_id=`facter ec2_instance_id`
+vault_user_id=${vault_user_id:-`sudo facter uuid`}
+
+# default role is deploy-ssl-certificate (override with --role)
+role=${role:=deploy-ssl-certificate}
+
+
+# log in to Vault
+vault_token=`curl \
+  -s \
+  -X POST \
+  -d "{\"app_id\":\"${vault_app_id}\",\"user_id\":\"${vault_user_id}\"}" \
+  https://127.0.0.1:8200/v1/auth/app-id/login \
+  | jq -r '.["auth"]["client_token"]' 2>/dev/null`
+
+if [ -z "${vault_token}" ]; then
+  fatal 'Unable to authenticate to Vault'
+fi
+
+# build the request for Vault
+issue_req="{\"common_name\":\"${common_name}\""
+
+if [ -n "$alt_names" ]; then
+  issue_req="${issue_req},\"alt_names\":\"${alt_names}\""
+fi
+
+if [ -n "$ip_sans" ]; then
+  issue_req="${issue_req},\"ip_sans\":\"${ip_sans}\""
+fi
+
+if [ -n "$lease" ]; then
+  issue_req="${issue_req},\"lease\":\"${lease}\""
+fi
+
+issue_req="${issue_req}}"
+
+
+# deploy the certificate and key files
+issue_json=`curl \
+  -s \
+  -X POST \
+  -H "X-Vault-Token: ${vault_token}" \
+  -d "${issue_req}" \
+  https://127.0.0.1:8200/v1/pki/issue/$role`
+
+certificate=`echo $issue_json | jq -r '.["data"]["certificate"]' 2>/dev/null | sed 's/\\n/\n/g'`
+issuing_ca=`echo $issue_json | jq -r '.["data"]["issuing_ca"]' 2>/dev/null | sed 's/\\n/\n/g'`
+private_key=`echo $issue_json | jq -r '.["data"]["private_key"]' 2>/dev/null | sed 's/\\n/\n/g'`
+
+if echo "$certificate" | openssl x509 -noout 2>/dev/null; then
+  if echo "$issuing_ca" | openssl x509 -noout 2>/dev/null; then
+    echo "$certificate" > ${certfile}.tmp
+    echo "$issuing_ca" >> ${certfile}.tmp
+  else
+    fatal 'Issuing CA certificate is not valid'
+  fi
+else
+  fatal 'Generated SSL certificate is not valid'
+fi
+
+if echo "$private_key" | openssl rsa -noout 2>/dev/null; then
+  mv ${certfile}.tmp ${certfile}
+  if [ "$certfile" == "$keyfile" ]; then
+    echo $private_key >> $keyfile
+    log 'Deployed certificate bundle'
+  else
+    echo $private_key > $keyfile
+    log 'Deployed certificate and key'
+  fi
+else
+  fatal 'SSL private key is not valid'
+fi
+
+
+# log out of Vault
+curl \
+  -s \
+  -X POST \
+  -H "X-Vault-Token: ${vault_token}" \
+  https://localhost:8200/v1/auth/token/revoke/$token
+
+
+# optionally run the post-rotate command
+if [ -s "$post_rotate" ]; then
+  $post_rotate
+  log 'Requested certificate reload'
+fi

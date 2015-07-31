@@ -1,0 +1,187 @@
+#!/bin/bash
+#
+# vault-auth-app
+#
+# Helper script to authorise a given application to access a list of roles
+# within Vault using the app-id authentication backend.
+#
+######################################################################
+# Script configuration
+######################################################################
+
+version=0.1.0
+
+declare -a roles_array
+
+######################################################################
+# Functions
+######################################################################
+
+usage(){
+  cat <<EOF
+  Usage: $0 [<options>]
+
+  --version              Show the version of this script
+  --help                 Display this mess
+  --token <token>        Use <token> to authenticate with vault.  If not
+                         provided, VAULT TOKEN environment variable will be
+                         used.  Prefix with @ to read token from a file
+  --enable-backend       Enable the App ID auth backend if it's not already
+                         enabled
+  --app-name <name>      Configure application name for audit logs to <name>
+  --app-id <id>          Configure authentication for app-id <id>.  Prefix with
+                         @ to request app-id from the application.  The
+                         application must support the --show-app-id flag for
+                         this to work
+  --user-id <id>         Configure authenticate for user-id <id>.  If not
+                         provided, the EC2 instance ID or UUID will be used
+  --cidr-block <cidr>    Limit access to the given CIDR block
+  --roles <roles>        Comma separated list of Vault roles that will be
+                         permitted for the provided app-id + user-id
+
+EOF
+
+  exit 1
+}
+
+version(){
+  cat <<EOF
+  vault-auth-app version $version
+
+EOF
+
+  exit 0
+}
+
+strip_leading_at(){
+  input=$1
+  output=`echo -n $input | sed -e 's/^@//'`
+
+  echo -n $output
+
+  if [ "$input" == "$output" ]; then
+    return 1
+  else
+    return 0
+  fi
+}
+
+log(){ echo -e "\e[32m\e[1m--> ${1}...\e[0m"; }
+warn(){ echo -e "\e[33m\e[1mWARNING: ${1}\e[0m"; }
+error(){ echo -e "\e[31m\e[1mERROR: ${1}\e[0m"; }
+fatal(){ echo -e "\e[31m\e[1mFATAL: ${1}\e[0m"; exit 1; }
+
+######################################################################      
+# Script start
+######################################################################
+
+PARSED_OPTIONS=$(getopt -n "$0" -o hvt:en:a:u:c:r: --long "help,version,token:,enable-backend,app-name:,app-id:,user-id:,cidr_block:,roles:,role:" -- "$@")
+
+if [ $? -ne 0 ]; then
+  usage
+fi
+
+eval set -- "$PARSED_OPTIONS"
+while true; do
+  case "$1" in
+    -h|--help)
+      usage;;
+    -v|--version)
+      version;;
+    -t|--token)
+      token=$2
+      shift 2;;
+    -e|--enable-backend)
+      enable_backend=1
+      shift;;
+    -n|--app-name)
+      app_name=$2
+      shift 2;;
+    -a|--app-id)
+      app_id=$2
+      shift 2;;
+    -u|--user-id)
+      user_id=$2
+      shift 2;;
+    -c|--cidr_block)
+      cidr_block=$2
+      shift 2;;
+    -r|--roles|--role)
+      roles=$2
+      shift 2;;
+    --)
+      shift
+      break;;
+    *)
+      error "unknown option $1"
+      usage;;
+  esac
+done
+
+
+# validate and mutate inputs
+token=`strip_leading_at "$token"`
+if [ "$?" -eq "0" ]; then
+  # token had a leading "@"; read token from file
+  token=`cat $token 2>/dev/null`
+fi
+
+if [ -z "$token" -a -z "$VAULT_TOKEN" ]; then
+  fatal "Authentication token is required"
+fi
+
+app_id=`strip_leading_at "$app_id"`
+if [ "$?" -eq "0" ]; then
+  # app_id had a leading "@"; get app_id directly from app
+  app_id=`$app_id --show-app-id 2>/dev/null`
+fi
+
+if [ -z "$app_id" ]; then
+  fatal "app-id is required"
+fi
+
+if [ -z "$app_name" ]; then
+  app_name=$app_id
+fi
+
+for user_id in "$user_id" `facter ec2_instance_id` `sudo facter uuid`; do
+  if [ -n "$user_id" ]; then
+    break
+  fi
+done
+if [ -z "$user_id" ]; then
+  fatal "user-id is required"
+fi
+
+if [ -n "$cidr_block" ]; then
+  cidr_block=" cidr_block=$cidr_block"
+fi
+
+echo "roles is $roles"
+roles_array=( ${roles//,/ } )
+if [ ${#roles_array[@]} -eq 0 ]; then
+  fatal "at least one role is required"
+fi
+
+# set up the environment
+if [ -n "$token" ]; then
+  export VAULT_TOKEN=$token
+fi
+
+# ensure App ID auth backend is enabled
+if ! vault auth -methods | grep -qs '^app-id/'; then
+  if [ "$enable_backend" -eq "1" ]; then
+    vault auth-enable app-id
+  else
+    fatal "App ID auth backend is not enabled (need --enable-backend?)"
+  fi
+fi
+if ! vault auth -methods | grep -qs '^app-id/'; then
+  fatal "Unable to enable App ID auth backend"
+fi
+
+# add the user-id/app-id pairs for each role
+for role in ${roles_array[@]}; do
+  vault write auth/app-id/map/app-id/$app_id value=$role display_name=$app_name
+  vault write auth/app-id/map/user-id/$user_id value=$app_id$cidr_block
+done

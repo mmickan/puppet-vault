@@ -290,6 +290,8 @@ class vault(
   class { 'vault::config': } ~>
   class { 'vault::service': }
 
+  include vault::tools
+
   if $debug {
     class { 'vault::debug': }
   }
