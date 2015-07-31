@@ -137,7 +137,7 @@ fatal(){ echo -e "\e[31m\e[1mFATAL: ${1}\e[0m"; exit 1; }
 # Script start
 ######################################################################
 
-PARSED_OPTIONS=$(getopt -n "$0" -o hvfa --long "help,version,force,altnames" -- "$@")
+PARSED_OPTIONS=$(getopt -n "$0" -o hvfa: --long "help,version,force,altnames:" -- "$@")
 
 if [ $? -ne 0 ]; then
   usage
@@ -151,9 +151,11 @@ while true; do
     -v|--version)
       version;;
     -f|--force)
-      force=1;;
+      force=1
+      shift;;
     -a|--altnames)
-      altnames=$1;;
+      altnames=$2
+      shift 2;;
     --)
       shift
       break;;
