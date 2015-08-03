@@ -12,9 +12,8 @@
 #   Default: undef
 #
 # [*domain*]
-#   String.  The domain under which this certificate is being issued.
-#   Passed through to vault as the role (under pki/issue/) when requesting
-#   the certificate.
+#   String.  The domain under which this certificate is being issued.  This
+#   should match the role for Vault's PKI secret backend.
 #   Default:  based on $host (everything after the first ".")
 #
 # [*aliases*]
@@ -113,10 +112,10 @@ define vault::ssl_certificate(
   }
 
   if $domain {
-    $role = $domain
+    $_domain = $domain
   } else {
-    # generate $role based on $host
-    $role = regsubst($host, '^[^\.]+\.', '')
+    # generate $_domain based on $host
+    $_domain = regsubst($host, '^[^\.]+\.', '')
   }
 
 
@@ -124,13 +123,13 @@ define vault::ssl_certificate(
   include ::vault::tools
 
   exec { "Deploy SSL certificate for ${title}":
-    command => "/usr/local/bin/deploy-ssl-certificate --role ${role} --common_name ${host} ${alt_names} ${ip_sans} --lease ${vault::tools::lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
+    command => "/usr/local/bin/deploy-ssl-certificate --domain ${_domain} --common_name ${host} ${alt_names} ${ip_sans} --lease ${vault::tools::lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
     unless  => "/usr/bin/test -f ${cert_pem_full_path} && /usr/bin/test -f ${key_pem_full_path}",
     require => File['/usr/local/bin/deploy-ssl-certificate'],
   }
 
   cron { "Rotate SSL certificate for ${title}":
-    command => "/usr/local/bin/deploy-ssl-certificate --role ${role} --common_name ${host} ${alt_names} ${ip_sans} --lease ${vault::tools::lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
+    command => "/usr/local/bin/deploy-ssl-certificate --domain ${_domain} --common_name ${host} ${alt_names} ${ip_sans} --lease ${vault::tools::lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
     special => $vault::tools::rotate_frequency,
     require => File['/usr/local/bin/deploy-ssl-certificate'],
   }

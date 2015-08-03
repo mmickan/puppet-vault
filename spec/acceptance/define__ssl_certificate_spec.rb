@@ -4,32 +4,52 @@ describe 'vault::ssl_certificate defined type' do
 
   context 'default parameters' do
 
-    it 'shuold work with no errors' do
+    it 'should work with no errors' do
       pp = <<-EOS
       class { 'vault':
-        admins => ['vagrant'],
+        admins        => ['vagrant'],
+        puppet_app_id => 'puppet-acceptance-test-app-id',
       }
       ->
-      exec { 'Download Vagrant insecure key':
-        command => 'curl https://raw.githubusercontent.com/mitchellh/vagrant/master/keys/vagrant > /home/vagrant/.ssh/id_rsa',
-        path    => $::path,
-        creates => '/home/vagrant/.ssh/id_rsa',
+
+      # Allow Puppet to configure the PKI secret backend for the *.consul
+      # domain, and then configure it
+      exec { 'Authorise puppet':
+        command => 'vault-auth-app --app-id=puppet-acceptance-test-app-id --enable-backend -- puppet puppet-acceptance-test-app-id puppet,configure-pki-consul && touch /tmp/puppet_app_authorised',
+        creates => '/tmp/puppet_app_authorised',
+        path    => "/usr/local/bin:${::path}",
+        require => File['/usr/local/bin/vault-auth-app'],
       }
       ->
-      exec { 'Decrypt root token':
-        command => 'cat /home/vagrant/vault_initial_root_token | openssl rsautl -decrypt -inkey /home/vagrant/.ssh/id_rsa > /tmp/vault_initial_root_token',
-        path    => $::path,
-        creates => '/tmp/vault_initial_root_token',
+      vault::policy { 'configure-pki-consul':
+        policy => {
+          'pki-consul/config/ca' => 'sudo',
+          'secret/ssl/*'         => 'read',
+          'pki-consul/*'         => 'write',
+        }
       }
       ->
+      vault::backend::secret::pki{ 'consul': }
+      ->
+
+      # Allow the deploy-ssl-certificate script to issue certificates in the
+      # *.consul domain
       exec { 'Authorise deploy-ssl-certificate app':
-        command     => 'vault-auth-app --token=@/tmp/vault_initial_root_token --enable-backend --app-name=deploy-ssl-certificate --app-id=@deploy-ssl-certificate --roles=deploy-ssl-certificate',
+        command     => 'vault-auth-app --app-id=puppet-acceptance-test-app-id --enable-backend -- deploy-ssl-certificate @deploy-ssl-certificate deploy-ssl-certificate && touch /tmp/deploy-ssl-certificate_app_authorised',
+        creates     => '/tmp/deploy-ssl-certificate_app_authorised',
         path        => "/usr/local/bin:${::path}",
-        refreshonly => true,
-        require     => File['/usr/local/bin/deploy-ssl-certificate'],
-        subscribe   => File['/usr/local/bin/vault-auth-app'],
+        require     => [
+          File['/usr/local/bin/deploy-ssl-certificate'],
+          File['/usr/local/bin/vault-auth-app'],
+        ],
       }
       ->
+      vault::policy { 'deploy-ssl-certificate':
+        policy => { 'pki-consul/issue/consul' => 'write' }
+      }
+      ->
+
+      # Finally, deploy an SSL certificate/key pair
       vault::ssl_certificate { 'test-service':
         host      => 'host.node.consul',
         domain    => 'consul',

@@ -1,0 +1,6 @@
+<%- @policy.each_pair do |key, value| -%>
+path "<%= key %>" {
+  policy = "<%= value %>"
+}
+
+<%- end -%>

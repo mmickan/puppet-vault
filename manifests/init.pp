@@ -48,6 +48,11 @@
 #   token and unseal keys to the admins.
 #   Default: true
 #
+# [*puppet_app_id*]
+#   String.  When $bootstrap is true, specifies Puppet's app-id for
+#   authenticating against the App ID auth backend.
+#   Default: puppet  (it's recommended you don't use the default though)
+#
 # [*admins*]
 #   Array.  A list of usernames.  Accounts must exist, and each of those
 #   accounts must have either a /home/<username>/.ssh/id_rsa.pub or
@@ -186,7 +191,7 @@
 # [*stats_host_prefix*]
 #   Boolean.  If true, telemetry is prefixed with machine hostname.
 #   Default: true
-#   
+#
 # === Example usage
 #
 #  include vault
@@ -205,6 +210,7 @@ class vault(
   $debug_dir          = '/var/lib/puppet/debug',
   $manage_service     = true,
   $bootstrap          = true,
+  $puppet_app_id      = 'puppet',
   $admins             = [],
   $init_style         = 'upstart',
   $config_file        = '/etc/vault/config.hcl',

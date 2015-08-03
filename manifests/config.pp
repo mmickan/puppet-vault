@@ -98,6 +98,8 @@ class vault::config {
   }
 
   if $vault::bootstrap {
+    include vault::tools
+
     file { '/usr/local/bin/vault-bootstrap':
       source => 'puppet:///modules/vault/vault-bootstrap',
       owner  => 'root',
@@ -105,8 +107,12 @@ class vault::config {
       mode   => '0700',
     } ->
     exec { 'vault-bootstrap':
-      command => "/usr/local/bin/vault-bootstrap -- ${vault::admins_string}",
+      command => "vault-bootstrap --puppet-app-id=${vault::puppet_app_id} -- ${vault::admins_string}",
+      path    => "/usr/local/bin:${::path}",
       unless  => '/usr/bin/test -f /etc/vault/ssl/vault.cert.pem',
+      require => [
+        File['/usr/local/bin/deploy-ssl-certificate'],
+      ],
     }
   } else {
     if $vault::tls_cert_file != '/etc/vault/ssl/vault.cert.pem' {

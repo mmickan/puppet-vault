@@ -7,7 +7,8 @@ describe 'vault class' do
     it 'should work with no errors' do
       pp = <<-EOS
       class { 'vault':
-        admins => ['vagrant'],
+        admins        => ['vagrant'],
+        puppet_app_id => 'puppet-acceptance-test-app-id',
       }
       EOS
 

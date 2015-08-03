@@ -33,19 +33,52 @@ class vault::tools(
 
   ensure_packages('jq')
 
+  file { '/usr/local/bin/vault-auth-app':
+    source  => 'puppet:///modules/vault/vault-auth-app',
+    owner   => 'root',
+    group   => 'root',
+    mode    => '0700',
+    require => Package['jq'],
+  }
+
+  file { '/usr/local/bin/vault-auth-user':
+    source  => 'puppet:///modules/vault/vault-auth-user',
+    owner   => 'root',
+    group   => 'root',
+    mode    => '0700',
+    require => Package['jq'],
+  }
+
+  file { '/usr/local/bin/vault-check-mount':
+    source => 'puppet:///modules/vault/vault-check-mount',
+    owner  => 'root',
+    group   => 'root',
+    mode    => '0700',
+    require => Package['jq'],
+  }
+
+  file { '/usr/local/bin/vault-policy':
+    source  => 'puppet:///modules/vault/vault-policy',
+    owner   => 'root',
+    group   => 'root',
+    mode    => '0700',
+    require => Package['jq'],
+  }
+
+  file { '/usr/local/bin/vault-secret-pki':
+    source  => 'puppet:///modules/vault/vault-secret-pki',
+    owner   => 'root',
+    group   => 'root',
+    mode    => '0700',
+    require => Package['jq'],
+  }
+
   file { '/usr/local/bin/deploy-ssl-certificate':
     source  => 'puppet:///modules/vault/deploy-ssl-certificate',
     owner   => 'root',
     group   => 'root',
-    mode    => '0755',
+    mode    => '0700',
     require => Package['jq'],
-  }
-
-  file { '/usr/local/bin/vault-auth-app':
-    source => 'puppet:///modules/vault/vault-auth-app',
-    owner  => 'root',
-    group  => 'root',
-    mode   => '0755',
   }
 
 }

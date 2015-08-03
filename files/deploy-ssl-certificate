@@ -10,7 +10,13 @@
 ######################################################################
 
 version=0.1.0
+
 app_id='6D058FB8-2F63-48EF-A1E9-B91627478E67'
+
+user_id=`facter ec2_instance_id`
+user_id=${user_id:-`sudo facter uuid`}
+
+vault_addr=${VAULT_ADDR:-https://127.0.0.1:8200}
 
 ######################################################################
 # Functions
@@ -24,7 +30,9 @@ usage(){
   --help                           Display this mess
   --show-app-id                    Output this application's app-id (for
                                    Vault auth to App ID auth backend)
-  --role pki-role                  Use pki-role as auth role for Vault
+  --domain example.com             The base domain under which SSL cert is
+                                   to be issued.  This should match the role
+                                   configured in Vault's PKI secret backend
   --common_name cn                 The common name for the SSL cert
   --alt_names "name.domain"        Comma-separated list of subject altnames
   --ip_sans "1.2.3.4,5.6.7.8"      Comma-separated list of IP subject altnames
@@ -62,7 +70,7 @@ fatal(){ echo -e "\e[31m\e[1mFATAL: ${1}\e[0m"; exit 1; }
 # Script start
 ######################################################################
 
-PARSED_OPTIONS=$(getopt -n "$0" -o hvsr:n:a:i:l:c:k:p: --long "help,version,show-app-id,role:,common_name:,alt_names:,ip_sans:,lease:,certfile:,keyfile:,post_rotate:" -- "$@")
+PARSED_OPTIONS=$(getopt -n "$0" -o hvsd:n:a:i:l:c:k:p: --long "help,version,show-app-id,domain:,common_name:,alt_names:,ip_sans:,lease:,certfile:,keyfile:,post_rotate:" -- "$@")
 
 if [ $? -ne 0 ]; then
   usage
@@ -77,8 +85,8 @@ while true; do
       version;;
     -s|--show-app-id)
       show_app_id;;
-    -r|--role)
-      role=$2
+    -r|--domain)
+      domain=$2
       shift 2;;
     -n|--common_name)
       common_name=$2
@@ -111,21 +119,17 @@ while true; do
 done
 
 
-vault_app_id=$app_id
-
-vault_user_id=`facter ec2_instance_id`
-vault_user_id=${vault_user_id:-`sudo facter uuid`}
-
-# default role is deploy-ssl-certificate (override with --role)
-role=${role:=deploy-ssl-certificate}
-
+# --domain is a required parameter
+if [ -z "${domain}" ]; then
+  fatal "No domain specified"
+fi
 
 # log in to Vault
 vault_token=`curl \
   -s \
   -X POST \
-  -d "{\"app_id\":\"${vault_app_id}\",\"user_id\":\"${vault_user_id}\"}" \
-  https://127.0.0.1:8200/v1/auth/app-id/login \
+  -d "{\"app_id\":\"${app_id}\",\"user_id\":\"${user_id}\"}" \
+  ${vault_addr}/v1/auth/app-id/login \
   | jq -r '.["auth"]["client_token"]' 2>/dev/null`
 
 if [ -z "${vault_token}" ]; then
@@ -156,7 +160,7 @@ issue_json=`curl \
   -X POST \
   -H "X-Vault-Token: ${vault_token}" \
   -d "${issue_req}" \
-  https://127.0.0.1:8200/v1/pki/issue/$role`
+  ${vault_addr}/v1/pki-${domain}/issue/${domain}`
 
 certificate=`echo $issue_json | jq -r '.["data"]["certificate"]' 2>/dev/null | sed 's/\\n/\n/g'`
 issuing_ca=`echo $issue_json | jq -r '.["data"]["issuing_ca"]' 2>/dev/null | sed 's/\\n/\n/g'`
@@ -176,10 +180,10 @@ fi
 if echo "$private_key" | openssl rsa -noout 2>/dev/null; then
   mv ${certfile}.tmp ${certfile}
   if [ "$certfile" == "$keyfile" ]; then
-    echo $private_key >> $keyfile
+    echo "$private_key" >> $keyfile
     log 'Deployed certificate bundle'
   else
-    echo $private_key > $keyfile
+    echo "$private_key" > $keyfile
     log 'Deployed certificate and key'
   fi
 else
@@ -192,7 +196,7 @@ curl \
   -s \
   -X POST \
   -H "X-Vault-Token: ${vault_token}" \
-  https://localhost:8200/v1/auth/token/revoke/$token
+  ${vault_addr}/v1/auth/token/revoke/${vault_token}
 
 
 # optionally run the post-rotate command

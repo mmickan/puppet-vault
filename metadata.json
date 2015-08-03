@@ -1,6 +1,6 @@
 {
   "name": "mmickan-vault",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "source": "https://github.com/mmickan/puppet-vault",
   "author": "mmickan",
   "license": "Apache 2.0",

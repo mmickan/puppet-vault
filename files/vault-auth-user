@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# vault-auth-app
+# vault-auth-user
 #
-# Helper script to authorise a given application to access a list of roles
-# within Vault using the app-id authentication backend.
+# Helper script to authorise a given user access with a specific app-id from
+# a specific network source address, using the App ID auth backend.
 #
 ######################################################################
 # Script configuration
@@ -11,10 +11,10 @@
 
 version=0.1.0
 
-auth_app_id='AE199E42-27A1-48EA-A307-DA16AB275A9B'
+auth_app_id='426CB96A-A754-44BC-A16C-29FCCC59A0FF'
 
-user_id=`facter ec2_instance_id`
-user_id=${user_id:-`sudo facter uuid`}
+auth_user_id=`facter ec2_instance_id`
+auth_user_id=${auth_user_id:-`sudo facter uuid`}
 
 vault_addr=${VAULT_ADDR:-https://127.0.0.1:8200}
 
@@ -24,7 +24,7 @@ vault_addr=${VAULT_ADDR:-https://127.0.0.1:8200}
 
 usage(){
   cat <<EOF
-  Usage: $0 [<options>] -- app-name app-id roles
+  Usage: $0 [<options>]
 
   --version              Show the version of this script
   --help                 Display this mess
@@ -37,20 +37,15 @@ usage(){
                          VAULT_ADDR environment variable as default, and
                          falls back to https://127.0.0.1:8200 if neither the
                          parameter nor the environment variable are set
-  --app-id <id>     Use <id> to authenticate to App ID auth backend.  If not
-                    specified, this script's default app-id is used
   --enable-backend       Enable the App ID auth backend if it's not already
                          enabled
-
-  The three required parameters are:
-
-  app-name          The application name for audit logs
-  app-id            The application id for authentication with the App ID
-                    auth backend.  Prefix with @ to request app-id from the
-                    application.  The application must support the
-                    --show-app-id flag for this to work
-  roles             Comma separated list of Vault roles that will be
-                    permitted for the provided app-id
+  --app-id <id>          Configure authentication for app-id <id>.  Prefix with
+                         @ to request app-id from the application.  The
+                         application must support the --show-app-id flag for
+                         this to work
+  --user-id <id>         Configure authenticate for user-id <id>.  If not
+                         provided, the EC2 instance ID or UUID will be used
+  --cidr-block <cidr>    Limit access to the given CIDR block
 
 EOF
 
@@ -59,7 +54,7 @@ EOF
 
 version(){
   cat <<EOF
-  vault-auth-app version $version
+  vault-auth-user version $version
 
 EOF
 
@@ -94,7 +89,7 @@ fatal(){ echo -e "\e[31m\e[1mFATAL: ${1}\e[0m"; exit 1; }
 # Script start
 ######################################################################
 
-PARSED_OPTIONS=$(getopt -n "$0" -o hvst:a:e --long "help,version,show-app-id,token:,addr:,app-id:,enable-backend" -- "$@")
+PARSED_OPTIONS=$(getopt -n "$0" -o hvst:ea:u:c: --long "help,version,show-app-id,token:,addr:,enable-backend,app-id:,user-id:,cidr-block:" -- "$@")
 
 if [ $? -ne 0 ]; then
   usage
@@ -115,12 +110,18 @@ while true; do
     --addr)
       vault_addr=$2
       shift 2;;
-    -a|--app-id)
-      auth_app_id=$2
-      shift 2;;
     -e|--enable-backend)
       enable_backend=1
       shift;;
+    -a|--app-id)
+      app_id=$2
+      shift 2;;
+    -u|--user-id)
+      user_id=$2
+      shift 2;;
+    -c|--cidr-block)
+      cidr_block=$2
+      shift 2;;
     --)
       shift
       break;;
@@ -130,9 +131,6 @@ while true; do
   esac
 done
 
-app_name=$1
-app_id=$2
-roles=$3
 
 # validate and mutate inputs
 vault_token=`strip_leading_at "$vault_token"`
@@ -146,7 +144,7 @@ if [ -z "$vault_token" -a -z "$VAULT_TOKEN" ]; then
   vault_token=`curl \
     -s \
     -X POST \
-    -d "{\"app_id\":\"${auth_app_id}\",\"user_id\":\"${user_id}\"}" \
+    -d "{\"app_id\":\"${auth_app_id}\",\"user_id\":\"${auth_user_id}\"}" \
     ${vault_addr}/v1/auth/app-id/login \
     | jq -r '.["auth"]["client_token"]' 2>/dev/null`
 
@@ -168,12 +166,17 @@ if [ -z "$app_id" ]; then
   fatal "app-id is required"
 fi
 
-if [ -z "$app_name" ]; then
-  app_name=$app_id
+for user_id in "$user_id" `facter ec2_instance_id` `sudo facter uuid`; do
+  if [ -n "$user_id" ]; then
+    break
+  fi
+done
+if [ -z "$user_id" ]; then
+  fatal "user-id is required"
 fi
 
-if [ -z "$roles" ]; then
-  fatal "at least one role is required"
+if [ -n "$cidr_block" ]; then
+  cidr_block=" cidr_block=$cidr_block"
 fi
 
 # set up the environment
@@ -196,8 +199,17 @@ if ! vault auth -methods | grep -qs '^app-id/'; then
   fatal "Unable to enable App ID auth backend"
 fi
 
-# configure app-id permissions
-vault write auth/app-id/map/app-id/$app_id value="$roles" display_name=$app_name
+# vault write will replace rather than append to the App IDs this user
+# associates with, so we retrieve existing App IDs first and perform the
+# merge ourselves
+existing_app_ids=`vault read auth/app-id/map/user-id/$user_id \
+  | grep '^value' | awk '{print $2}'`
+
+if ! echo "$existing_app_ids" | grep -qs "^(.*,)?$app_id(,.*)?$"; then
+  app_id="${existing_app_ids},${app_id}"
+  # configure access for user-id
+  vault write auth/app-id/map/user-id/$user_id value=$app_id$cidr_block
+fi
 
 if [ ${generated_token:-0} -eq 1 ]; then
   # clean up after ourself

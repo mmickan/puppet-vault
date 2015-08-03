@@ -2,8 +2,8 @@
 #
 # vault-bootstrap
 #
-# Safely bootstrap a Vault instance, including unsealing it and providing
-# unseal keys to a list of users.
+# Safely bootstrap a Vault instance, including unsealing it and securely
+# providing unseal keys to a list of users.
 #
 # Parameters to the script after a double hyphen ("--") are the usernames
 # corresponding to the accounts that encrypted keys and key shards will be
@@ -11,7 +11,7 @@
 #
 #  vault-bootstrap -- john jane bob sigfried roy
 #
-#  Each account listed must have an ~/.ssh/id_rsa.pub or
+#  Each account listed must have an ~/.ssh/id_rsa.pub or an
 #  ~/.ssh/authorized_keys file containing at least one ssh public key.
 #
 # The number of key shares for unsealing Vault will be equal to the number
@@ -29,29 +29,23 @@
 #
 # The basic steps followed are:
 #
-# - create certificate authority root certificate and key with long expiry
-# - deploy CA root certificate for "update-ca-certificates" as
-#   /usr/local/share/ca-certificates/ca-root.crt
-# - create intermediate root certificate and key (shorter expiry time)
-# - deploy intermediate root certificate for "update-ca-certificates" as
-#   /usr/local/share/ca-certificates/intermediate-root.crt
-# - run update-ca-certificates script
-# - create server certificate and key for vault (signed by intermediate
-#   root)
-# - deploy server certificate and key as /etc/vault/ssl/vault.cert.pem and
-#   /etc/vault/ssl/vault.key.pem
-# - start vault
-# - initialise vault and capture the output (root token, unseal keys)
-# - unseal vault
-# - encrypt the root token and key shards (one shard per user) and place in
-#   users' home directory
-# - mount the PKI backend and configure it with the intermediate certificate
-#   and key
-# - place the CA root certificate and key in Vault at secret/pki/ca_root
-# - securely remove CA root key
-# - place the CA intermediate certificate and key in Vault at
-#   secret/pki/ca_intermediate
-# - seecurely remove CA intermediate key
+# - ensure backend storage is available (if not, exit indicating success)
+# - set up a certificate authority
+# - create trusted SSL cert for Vault
+# - start, initialise and unseal Vault
+# - distribute the initial root token and key shards (one per user) to the
+#   admins listed on the command line (encrypted using public ssh key and
+#   dropped into each user's home directory)
+# - mount the App ID backend
+# - create an initial "puppet" policy
+# - grant Puppet's app-id + user-id access to the "puppet" policy from the
+#   CIDR block in which Vault (all instances in an HA configuration) runs
+# - store the CA root certificate in Vault at secret/ssl/certs/ca.cert.pem
+# - store the CA root key in Vault at secret/ssl/private/ca.key.pem
+# - store the CA intermediate certificate in Vault at
+#   secret/ssl/certs/intermediate.cert.pem
+# - store the CA intermediate key in Vault at
+#   secret/ssl/private/intermediate.key.pem
 #
 # At this point, the users named on the command line should download the
 # encrypted files placed in their home direcories and securely erase them
@@ -67,30 +61,36 @@
 #
 # It is also recommended that the CA root key be retrieved from Vault,
 # encrypted, and placed alongside the unseal key and initial root token on
-# the encrypted USB stick:
-#
-# $ openssl rsa -aes256 -out /path/to/encrypted/usb/stick/ca.key.pem
-# <paste unencrypted key into terminal, then hit enter if not prompted for pass phrase immediately>
-#
-# Once all operators have done this, the CA root key should be removed from
-# Vault (note that "unset HISTFILE" is bash-specific; if you use a different
-# shell you'll likely need to use a different command to prevent command
-# history for the session being saved):
+# the encrypted USB stick (note that "unset HISTFILE" is bash-specific; if
+# you use a different shell you'll likely need to use a different command to
+# prevent command history for the session being saved):
 #
 # bash$ unset HISTFILE
 # bash$ export VAULT_TOKEN='XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
-# bash$ vault write secret/pki/ca_root certificate=@/etc/ssl/ca/certs/ca.cert.pem key=
+# bash$ vault read secret/ssl/private/ca.key.pem
+# bash$ openssl rsa -aes256 -out /path/to/encrypted/usb/stick/ca.key.pem
+# <paste unencrypted key into terminal, then hit enter if not prompted for pass phrase immediately>
+# bash$ vault read secret/ssl/private/intermediate.key.pem
+# bash$ openssl rsa -aes256 -out /path/to/encrypted/usb/stick/intermediate.key.pem
+# <paste unencrypted key into terminal, then hit enter if not prompted for pass phrase immediately>
 #
-# The same process could conceivably be followed with the CA intermediate
-# key, or it could simply be deleted given that Vault's PKI secret backend,
-# which is already configured, should be the only thing you need in order to
-# generate signed certificates and their keys.
+# Once all operators have done this, the CA keys should be removed from
+# Vault:
+#
+# bash$ vault delete secret/ssl/private/ca.key.pem
+# bash$ vault delete secret/ssl/private/intermediate.key.pem
+#
+# Note, however, that the vault::backend::secret::pki defined type by
+# default uses the intermediate certificate and key from Vault.  If you
+# delete the intermediate key from Vault before using Puppet to configure
+# the PKI backend, you'll need to provide the intermediate certificate and
+# key by passing them in as parameters.
 #
 ######################################################################
 # Script configuration
 ######################################################################
 
-version=0.1.0
+version=0.2.0
 
 declare -a usernames
 declare -a keys
@@ -98,6 +98,16 @@ declare -a keys
 # default is no subjectAltName, but the environment variable must exist or
 # openssl will complain of the variable having no value
 export ALTNAME=''
+
+ec2_instance_id=`facter ec2_instance_id`
+uuid=`facter uuid`
+
+# parameter defaults
+common_name=vault
+alt_names=IP:127.0.0.1
+app_id=puppet
+user_id=${ec2_instance_id:-$uuid}
+cidr_block=127.0.0.1/32
 
 ######################################################################
 # Functions
@@ -108,12 +118,16 @@ usage(){
 
   Usage: $0 [<options>] -- username ...
 
-  --version      Show the vault-bootstrap version number
-  --help         Display this mess
-  --force        Overwrite existing SSL keys (but note that this doesn't
-                 remove data from vault to allow a new "vault init" - it
-                 will fail if vault has previously been initialised)
-  --altnames     Subject Alternate Names for Vault's SSL certificate
+  --version             Show the vault-bootstrap version number
+  --help                Display this mess
+  --common-name <name>  Common name for Vault's SSL certificate
+  --alt-names <names>   Subject Alternate Names for Vault's SSL certificate
+  --puppet-app-id <id>  Puppet's App ID for accessing Vault
+  --puppet-user-id <id> User ID for Puppet to access Vault (usually for the
+                        node Vault is being bootstrapped on)
+  --cidr-block <cidr>   Limit Puppet user-id and app-id to the specified
+                        CIDR block (usually the node Vault is being
+                        bootstrapped on)
 EOF
 
   exit 1
@@ -133,11 +147,74 @@ warn(){ echo -e "\e[33m\e[1mWARNING: ${1}\e[0m"; }
 error(){ echo -e "\e[31m\e[1mERROR: ${1}\e[0m"; }
 fatal(){ echo -e "\e[31m\e[1mFATAL: ${1}\e[0m"; exit 1; }
 
+vault_backend(){
+  grep ^backend /etc/vault/config.hcl | awk '{print $2}' | sed -e 's/"//g'
+}
+
+consul_ready(){
+  leader=`curl -s http://127.0.0.1:8500/v1/status/leader | jq -r . 2>&1`
+  return [ -n "$leader" ]
+}
+
+vault_backend_ready(){
+  backend=`vault_backend`
+  case "$backend" in
+    file)
+      return 0;;
+    consul)
+      consul_ready
+      return $?;;
+    *)
+      warn "Vault backend ready confirmation not implemented for $backend"
+      return 0;;
+  esac
+}
+
+is_boolean(){
+  if [ "$1" == "true" ]; then
+    return 0
+  elif [ "$1" == "false" ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+vault_start(){
+  health=`curl -s https://127.0.0.1:8200/v1/sys/health`
+  status=$?
+  if [ $status -eq 7 ]; then
+    log "Starting Vault"
+    sudo service vault start >/dev/null 2>/dev/null
+    for i in {1..60}; do
+      health=`curl -s https://127.0.0.1:8200/v1/sys/health`
+      status=$?
+      if [ $status -eq 0 ]; then
+        break
+      fi
+      sleep 1
+    done
+  fi
+  initialised=`echo $health | jq '.["initialized"]' 2>/dev/null`
+  sealed=`echo $health | jq '.["sealed"]' 2>/dev/null`
+  standby=`echo $health | jq '.["standby"]' 2>/dev/null`
+  if ! is_boolean "$initialised"; then
+    fatal "Unable to determine Vault initialised state"
+  fi
+  if ! is_boolean "$sealed"; then
+    fatal "Unable to determine Vault sealed state"
+  fi
+  if ! is_boolean "$standby"; then
+    fatal "Unable to determine Vault standby state"
+  fi
+}
+
+
 ######################################################################
 # Script start
 ######################################################################
 
-PARSED_OPTIONS=$(getopt -n "$0" -o hvfa: --long "help,version,force,altnames:" -- "$@")
+PARSED_OPTIONS=$(getopt -n "$0" -o hvc:a:i:u:n: --long "help,version,force,common-name:,alt-names:,puppet-app-id:,puppet-user-id:,cidr-block:" -- "$@")
 
 if [ $? -ne 0 ]; then
   usage
@@ -150,11 +227,20 @@ while true; do
       usage;;
     -v|--version)
       version;;
-    -f|--force)
-      force=1
-      shift;;
-    -a|--altnames)
-      altnames=$2
+    -c|--common-name)
+      common_name=$2
+      shift 2;;
+    -a|--alt-names)
+      alt_names=$2
+      shift 2;;
+    -i|--puppet-app-id)
+      app_id=$2
+      shift 2;;
+    -u|--puppet-user-id)
+      user_id=$2
+      shift 2;;
+    -n|--cidr-block)
+      cidr_block=$2
       shift 2;;
     --)
       shift
@@ -164,6 +250,12 @@ while true; do
       usage;;
   esac
 done
+
+
+if ! vault_backend_ready; then
+  log "Vault backend not ready - will not bootstrap yet"
+  exit 0
+fi
 
 usernames=( $* )
 
@@ -177,14 +269,14 @@ else
   key_threshold=3
 fi
 
-# default altnames is just "IP:127.0.0.1".  To allow access to vault using
+# default alt_names is just "IP:127.0.0.1".  To allow access to vault using
 # other host names or IP addresses, set this to a comma-separated list of
 # IP:<address> and DNS:<name> entries.  IP:127.0.0.1 will be added to the
 # list if it's not already included - this allows local access without
 # setting the VAULT_ADDR environment variable
-altnames=${altnames:-IP:127.0.0.1}
-if ! echo $altnames | grep -qs 'IP:127.0.0.1'; then
-  altnames="${altnames}, IP:127.0.0.1"
+alt_names=${alt_names:-IP:127.0.0.1}
+if ! echo $alt_names | grep -qs 'IP:127.0.0.1'; then
+  alt_names="${alt_names}, IP:127.0.0.1"
 fi
 
 # validate that all userids passed in have ssh public keys
@@ -205,23 +297,15 @@ for username in "${usernames[@]}"; do
   fi
 done
 
-# Stop users from doing silly things (unless --force is enabled, then the
-# user gets to keep both pieces if they break it)
-if [[ $force -eq 1 ]]; then
-  rm -f /etc/ssl/ca/{private/ca.key.pem,certs/ca.cert.pem}
-  rm -f /etc/ssl/ca/intermediate/{private/intermediate.key.pem,certs/{vault,intermediate}.cert.pem}
-  rm -f /etc/vault/ssl/vault.{cert,key}.pem
-fi
-
-for file in /etc/ssl/ca/{private/ca.key.pem,certs/ca.cert.pem,intermediate/{private/intermediate.key.pem,certs/intermediate.cert.pem}}; do
+for file in /etc/ssl/ca/{private/ca.key.pem,certs/ca.cert.pem,intermediate/{private/intermediate.key.pem,certs/intermediate.cert.pem}} /etc/vault/ssl/vault.{cert,key}.pem; do
   if [ -e $file ]; then
-    fatal "$file already exists - use --force to overwrite existing files"
+    fatal "${file} already exists, aborting"
   fi
 done
 
 for dir in /etc/ssl/ca/{,private,certs,crl,newcerts,intermediate/{,certs,crl,csr,newcerts,private}}; do
-  if [[ -d $dir && $force -ne 1 ]]; then
-    warn "${dir} already exists"
+  if [[ -d $dir ]]; then
+    warn "${dir} already exists, but continuing anyway"
   fi
 done
 
@@ -439,7 +523,7 @@ log "Generating server certificate and key for Vault"
 openssl genrsa -out /etc/vault/ssl/vault.key.pem
 chmod 0400 /etc/vault/ssl/vault.key.pem
 
-env ALTNAME=$altnames \
+env ALTNAME="$alt_names" \
   openssl req -config intermediate/openssl.cnf \
   -reqexts v3_req \
   -subj '/CN=vault' \
@@ -454,33 +538,22 @@ chmod 0444 intermediate/certs/vault.cert.pem
 
 cp intermediate/certs/vault.cert.pem /etc/vault/ssl/vault.cert.pem
 
-# start up vault - note that we assume vault is not already running and
-# avoid a restart here.  Restarting will seal an active vault, which we want
-# to avoid doing by accident.
-service vault start || fatal "Unable to start Vault"
-
-# wait for Vault to complete startup
-for i in {1..30}; do
-  if vault status 2>&1 | grep -qs 'server is not yet initialized'; then
-    break
-  fi
-  log "Waiting for Vault to start"
-  sleep 2
-done
-
-# initialise vault and capture the output (root token, unseal key shards)
-if vault status 2>&1 | grep -qs 'server is not yet initialized'; then
-  vault_init=`vault init -key-shares=$key_shares -key-threshold=$key_threshold`
-  for i in $(seq 1 $key_shares); do
-    keys[$((i-1))]=`echo "$vault_init" | grep "^Key ${i}: " | awk '{print $3}'`
-  done
-  token=`echo "$vault_init" | grep '^Initial Root Token:' | awk '{print $4}'`
-  export VAULT_TOKEN="$token"
-else
-  fatal "Unable to find an uninitialised Vault running - bootstrap aborted"
+vault_start
+if [ "$initialised" == "true" ]; then
+  log "Vault already initialised - will not bootstrap"
+  exit 0
 fi
 
+# initialise vault and capture the output (root token, unseal key shards)
+vault_init=`vault init -key-shares=$key_shares -key-threshold=$key_threshold`
+for i in $(seq 1 $key_shares); do
+  keys[$((i-1))]=`echo "$vault_init" | grep "^Key ${i}: " | awk '{print $3}'`
+done
+vault_token=`echo "$vault_init" | grep '^Initial Root Token:' | awk '{print $4}'`
+export VAULT_TOKEN="$vault_token"
+
 # TODO: ensure we have the expected keys and token.  Fatal error if we don't
+echo "$vault_init"
 
 # unseal vault
 log "Unsealing vault"
@@ -490,55 +563,88 @@ for i in $(seq 1 $key_threshold); do
     -o /dev/null \
     --cacert /etc/ssl/ca/intermediate/certs/ca-chain.cert.pem \
     -X PUT \
-    -H "X-Vault-Token: $token" \
+    -H "X-Vault-Token: $vault_token" \
     -d "{\"key\":\"${keys[$((i-1))]}\"}" \
     https://127.0.0.1:8200/v1/sys/unseal
 done
 
 # encrypt the root token and key shards (one shard per user) and place in
 # each user's home directory
+log "Distributing unseal keys and initial root token"
 for i in $(seq 0 $((key_shares-1))); do
   echo "${keys[$i]}" | \
     openssl rsautl -encrypt -pubin -inkey "/home/${usernames[$i]}/.ssh/id_rsa.pub.pem" \
     > "/home/${usernames[$i]}/vault_unseal_key"
-  echo "$token" | \
+  echo "$vault_token" | \
     openssl rsautl -encrypt -pubin -inkey "/home/${usernames[$i]}/.ssh/id_rsa.pub.pem" \
     > "/home/${usernames[$i]}/vault_initial_root_token"
 done
 
-# mount PKI backend and deploy the intermediate certificate and key to it
-vault mount pki
-cat \
-  /etc/ssl/ca/intermediate/certs/intermediate.cert.pem \
-  /etc/ssl/ca/intermediate/private/intermediate.key.pem \
-  | vault write pki/config/ca pem_bundle="-"
-
-# store the CA root certificate/key pair securely and erase the key from disk
-vault write secret/pki/ca_root \
-  certificate=@/etc/ssl/ca/certs/ca.cert.pem \
-  key=@/etc/ssl/ca/private/ca.key.pem
-# note that shred is not effective on all filesystem types - see 'man shred'
+# Store certificate authority certs and keys in Vault, and remove keys from
+# disk
+vault write secret/ssl/certs/ca.cert.pem \
+  value=@/etc/ssl/ca/certs/ca.cert.pem
+vault write secret/ssl/private/ca.key.pem \
+  value=@/etc/ssl/ca/private/ca.key.pem
+vault write secret/ssl/certs/intermediate.cert.pem \
+  value=@/etc/ssl/ca/intermediate/certs/intermediate.cert.pem
+vault write secret/ssl/private/intermediate.key.pem \
+  value=@/etc/ssl/ca/intermediate/private/intermediate.key.pem
 shred --zero --remove /etc/ssl/ca/private/ca.key.pem
-
-# store the CA intermediate certificate/key pair securely and erase the key from disk
-vault write secret/pki/ca_intermediate \
-  certificate=@/etc/ssl/ca/intermediate/certs/intermediate.cert.pem \
-  key=@/etc/ssl/ca/intermediate/private/intermediate.key.pem
-# note that shred is not effective on all filesystem types - see 'man shred'
 shred --zero --remove /etc/ssl/ca/intermediate/private/intermediate.key.pem
 
-# TODO: minimise the actions below to just bootstrap enough for Puppet to
-# take on the remaining configuration, and create appropriate Puppet defined
-# types to facilitate using it for the remaining configuration.
+# Enable App ID auth backend
+log "Enabling App ID auth backend"
+vault auth-enable app-id
 
-# create pki role allowing generation of certificates for consul domain
-vault write pki/roles/consul \
-  allowed_base_domain=consul \
-  allow_subdomains=true \
-  lease_max=168h   # == 1 week
+# Create "puppet" policy
+log "Configuring initial access for Puppet"
+mkdir -p /etc/vault/policies
+cat <<EOF >/etc/vault/policies/puppet.hcl
+# manage app-id to policy mappings
+path "sys/auth" {
+  policy = "read"
+}
+path "auth/app-id/map/app-id/*" {
+  policy = "sudo"
+}
 
-cat <<EOF | vault policy-write deploy-ssl-certificate -
-path "pki/issue/consul" {
-  policy = "write"
+# mount backends and determine which backends are mounted
+path "sys/mounts" {
+  policy = "read"
+}
+path "sys/mounts/*" {
+  policy = "sudo"
+}
+
+# manage policies
+path "sys/policy/*" {
+  policy = "sudo"
 }
 EOF
+vault policy-write puppet /etc/vault/policies/puppet.hcl
+
+# Give Puppet the required access for it to take over configuration
+vault write auth/app-id/map/app-id/$app_id value=puppet display_name=puppet
+vault write auth/app-id/map/user-id/$user_id value=$app_id cidr_block=$cidr_block
+
+# Give helper applications the required access to run locally
+vault-auth-user --app-id=@deploy-ssl-certificate --cidr-block=127.0.0.1/32
+
+# Set up temporary access for bootstrapping cluster.  It provides limited
+# access (it can read and write user-ids for the App ID auth backend and
+# has no further access).  Once bootstrapping is completed, both the app-id
+# (auth/app-id/map/app-id/bootstrap) and user-id
+# (auth/app-id/map/user-id/bootstrap) should be deleted and tests run to
+# confirm that Vault is configured correctly.
+log "Configuring temporary access for bootstrapping cluster"
+cat <<EOF >/etc/vault/policies/auth-user.hcl
+# manage user-id to app-id mappings
+path "auth/app-id/map/user-id/*" {
+  policy = "sudo"
+}
+EOF
+vault policy-write auth-user /etc/vault/policies/auth-user.hcl
+
+vault write auth/app-id/map/app-id/bootstrap value=auth-user display_name=bootstrap
+vault write auth/app-id/map/user-id/bootstrap value=bootstrap
