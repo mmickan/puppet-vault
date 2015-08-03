@@ -153,7 +153,11 @@ vault_backend(){
 
 consul_ready(){
   leader=`curl -s http://127.0.0.1:8500/v1/status/leader | jq -r . 2>&1`
-  return [ -n "$leader" ]
+  if [ -n "$leader" ]; then
+    return 0
+  else
+    return 1
+  fi
 }
 
 vault_backend_ready(){
