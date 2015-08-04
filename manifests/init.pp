@@ -53,6 +53,15 @@
 #   authenticating against the App ID auth backend.
 #   Default: puppet  (it's recommended you don't use the default though)
 #
+# [*common_name*]
+#   String.  The primary name to list on Vault's SSL certificate.
+#   Default: vault
+#
+# [*alt_names*]
+#   Array.  Additional names to list on Vault's SSL certificate.  Note that
+#   hostnames should be prefixed with "DNS:" and IP addresses with "IP:".
+#   Default: ["IP:${::ipaddress}"]
+#
 # [*admins*]
 #   Array.  A list of usernames.  Accounts must exist, and each of those
 #   accounts must have either a /home/<username>/.ssh/id_rsa.pub or
@@ -211,6 +220,8 @@ class vault(
   $manage_service     = true,
   $bootstrap          = true,
   $puppet_app_id      = 'puppet',
+  $common_name        = 'vault',
+  $alt_names          = ["IP:${::ipaddress}"],
   $admins             = [],
   $init_style         = 'upstart',
   $config_file        = '/etc/vault/config.hcl',
@@ -248,6 +259,8 @@ class vault(
   validate_absolute_path($debug_dir)
   validate_bool($manage_service)
   validate_bool($bootstrap)
+  validate_string($common_name)
+  validate_array($alt_names)
   validate_array($admins)
   validate_re($init_style, '^(upstart)$', 'vault init_style is not valid')
   validate_absolute_path($config_file)
@@ -279,6 +292,7 @@ class vault(
     fail('vault requires at least one admin when bootstrap is enabled')
   }
   $admins_string = join($admins, ' ')
+  $alt_names_string = join($alt_names, ',')
 
   # derived settings
   case $::architecture {

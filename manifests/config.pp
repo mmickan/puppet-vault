@@ -107,7 +107,7 @@ class vault::config {
       mode   => '0700',
     } ->
     exec { 'vault-bootstrap':
-      command => "vault-bootstrap --puppet-app-id=${vault::puppet_app_id} -- ${vault::admins_string}",
+      command => "vault-bootstrap --puppet-app-id=${vault::puppet_app_id} --common-name=${vault::common_name} --alt-names=${vault::alt_names_string} -- ${vault::admins_string}",
       path    => "/usr/local/bin:${::path}",
       unless  => '/usr/bin/test -f /etc/vault/ssl/vault.cert.pem',
       require => [
