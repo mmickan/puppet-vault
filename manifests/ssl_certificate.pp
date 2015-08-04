@@ -42,6 +42,10 @@
 #   certificate.  Must be fully qualified.
 #   Default: undef
 #
+# [*vault*]
+#   String.  Base URL for Vault instance to connect to.
+#   Default: https://127.0.0.1:8200
+#
 # === Example usage
 #
 #  file { '/etc/logstashforwarder/ssl':
@@ -70,6 +74,7 @@ define vault::ssl_certificate(
   $cert_pem    = "${host}.cert.pem",
   $key_pem     = "${host}.key.pem",
   $post_rotate = undef,
+  $vault       = 'https://127.0.0.1:8200',
 ) {
 
   # data validation
@@ -80,6 +85,7 @@ define vault::ssl_certificate(
   elsif ! is_absolute_path($cert_pem) { validate_absolute_path($directory) }
   elsif ! is_absolute_path($key_pem) { validate_absolute_path($directory) }
   if $post_rotate { validate_string($post_rotate) }
+  validate_string($vault)
 
   # data mutation
   $sanitised_directory = regsubst($directory, '/$', '')  # remove trailing slash if present
@@ -123,13 +129,14 @@ define vault::ssl_certificate(
   include ::vault::tools
 
   exec { "Deploy SSL certificate for ${title}":
-    command => "/usr/local/bin/deploy-ssl-certificate --domain ${_domain} --common_name ${host} ${alt_names} ${ip_sans} --lease ${vault::tools::lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
-    unless  => "/usr/bin/test -f ${cert_pem_full_path} && /usr/bin/test -f ${key_pem_full_path}",
-    require => File['/usr/local/bin/deploy-ssl-certificate'],
+    command     => "/usr/local/bin/deploy-ssl-certificate --domain ${_domain} --common_name ${host} ${alt_names} ${ip_sans} --lease ${vault::tools::lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
+    unless      => "/usr/bin/test -f ${cert_pem_full_path} && /usr/bin/test -f ${key_pem_full_path}",
+    environment => "VAULT_ADDR=${vault}",
+    require     => File['/usr/local/bin/deploy-ssl-certificate'],
   }
 
   cron { "Rotate SSL certificate for ${title}":
-    command => "/usr/local/bin/deploy-ssl-certificate --domain ${_domain} --common_name ${host} ${alt_names} ${ip_sans} --lease ${vault::tools::lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
+    command => "env VAULT_ADDR=${vault} /usr/local/bin/deploy-ssl-certificate --domain ${_domain} --common_name ${host} ${alt_names} ${ip_sans} --lease ${vault::tools::lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
     special => $vault::tools::rotate_frequency,
     require => File['/usr/local/bin/deploy-ssl-certificate'],
   }
