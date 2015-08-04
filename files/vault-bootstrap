@@ -650,6 +650,9 @@ cat <<EOF >/etc/vault/policies/auth-user.hcl
 path "auth/app-id/map/user-id/*" {
   policy = "sudo"
 }
+path "secret/ssl/certs/*" {
+  policy = "read"
+}
 EOF
 vault policy-write auth-user /etc/vault/policies/auth-user.hcl
 
