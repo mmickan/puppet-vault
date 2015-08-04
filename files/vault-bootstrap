@@ -540,7 +540,10 @@ openssl ca -config intermediate/openssl.cnf -batch \
   -out intermediate/certs/vault.cert.pem
 chmod 0444 intermediate/certs/vault.cert.pem
 
-cp intermediate/certs/vault.cert.pem /etc/vault/ssl/vault.cert.pem
+cat \
+  intermediate/certs/vault.cert.pem \
+  intermediate/certs/intermediate.cert.pem \
+  > /etc/vault/ssl/vault.cert.pem
 
 vault_start
 if [ "$initialised" == "true" ]; then
