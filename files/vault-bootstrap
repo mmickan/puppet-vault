@@ -530,7 +530,7 @@ chmod 0400 /etc/vault/ssl/vault.key.pem
 env ALTNAME="$alt_names" \
   openssl req -config intermediate/openssl.cnf \
   -reqexts v3_req \
-  -subj '/CN=vault' \
+  -subj "/CN=${common_name}" \
   -key /etc/vault/ssl/vault.key.pem \
   -new -sha256 -out intermediate/csr/vault.csr.pem
 
