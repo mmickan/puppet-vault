@@ -46,6 +46,10 @@
 #   String.  Base URL for Vault instance to connect to.
 #   Default: https://127.0.0.1:8200
 #
+# [*lease_duration*]
+#
+# [*rotate_frequency*]
+#
 # === Example usage
 #
 #  file { '/etc/logstashforwarder/ssl':
@@ -68,14 +72,35 @@
 #
 define vault::ssl_certificate(
   $host,
-  $domain      = undef,
-  $aliases     = [],
-  $directory   = undef,
-  $cert_pem    = "${host}.cert.pem",
-  $key_pem     = "${host}.key.pem",
-  $post_rotate = undef,
-  $vault       = 'https://127.0.0.1:8200',
+  $domain           = undef,
+  $aliases          = [],
+  $directory        = undef,
+  $cert_pem         = "${host}.cert.pem",
+  $key_pem          = "${host}.key.pem",
+  $post_rotate      = undef,
+  $vault            = undef,
+  $lease_duration   = undef,
+  $rotate_frequency = undef,
 ) {
+
+  if ! defined(Class['vault']) {
+    include vault
+  }
+
+  $_vault = $vault ? {
+    undef   =>"${::vault::advertise_scheme}://${::vault::advertise_addr}:${::vault::advertise_port}",
+    default => $vault,
+  }
+
+  $_lease_duration = $lease_duration ? {
+    undef   => $::vault::lease_duration,
+    default => $lease_duration,
+  }
+
+  $_rotate_frequency = $rotate_frequency ? {
+    undef   => $::vault::rotate_frequency,
+    default => $rotate_frequency,
+  }
 
   # data validation
   validate_string($host)
@@ -85,7 +110,7 @@ define vault::ssl_certificate(
   elsif ! is_absolute_path($cert_pem) { validate_absolute_path($directory) }
   elsif ! is_absolute_path($key_pem) { validate_absolute_path($directory) }
   if $post_rotate { validate_string($post_rotate) }
-  validate_string($vault)
+  validate_string($_vault)
 
   # data mutation
   $sanitised_directory = regsubst($directory, '/$', '')  # remove trailing slash if present
@@ -102,8 +127,8 @@ define vault::ssl_certificate(
     $key_pem_full_path = "${sanitised_directory}/${key_pem}"
   }
 
-  $alt_names_array = prefix($aliases.filter |$x| { ! is_ip_address($x) }, 'DNS:')
-  $ip_sans_array   = prefix($aliases.filter |$x| { is_ip_address($x) }, 'IP:')
+  $alt_names_array = $aliases.filter |$x| { ! is_ip_address($x) }
+  $ip_sans_array   = $aliases.filter |$x| { is_ip_address($x) }
 
   if size($alt_names_array) > 0 {
     $alt_names = join(['--alt_names ', '"', join($alt_names_array, ', '), '"'], '')
@@ -126,18 +151,18 @@ define vault::ssl_certificate(
 
 
   # resource instantiation
-  include ::vault::tools
-
+  Exec <| title == 'vault-bootstrap' |> ->
   exec { "Deploy SSL certificate for ${title}":
-    command     => "/usr/local/bin/deploy-ssl-certificate --domain ${_domain} --common_name ${host} ${alt_names} ${ip_sans} --lease ${vault::tools::lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
+    command     => "/usr/local/bin/deploy-ssl-certificate --domain ${_domain} --common_name ${host} ${alt_names} ${ip_sans} --lease ${_lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
     unless      => "/usr/bin/test -f ${cert_pem_full_path} && /usr/bin/test -f ${key_pem_full_path}",
-    environment => "VAULT_ADDR=${vault}",
+    environment => "VAULT_ADDR=${_vault}",
+    tries       => 7,   # wait up to 60 seconds - designed to work with a DNS address advertised by Consul using a max 60s service check
+    try_sleep   => 10,
     require     => File['/usr/local/bin/deploy-ssl-certificate'],
-  }
-
+  } ->
   cron { "Rotate SSL certificate for ${title}":
-    command => "env VAULT_ADDR=${vault} /usr/local/bin/deploy-ssl-certificate --domain ${_domain} --common_name ${host} ${alt_names} ${ip_sans} --lease ${vault::tools::lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
-    special => $vault::tools::rotate_frequency,
+    command => "env VAULT_ADDR=${_vault} /usr/local/bin/deploy-ssl-certificate --domain ${_domain} --common_name ${host} ${alt_names} ${ip_sans} --lease ${_lease_duration} --certfile ${cert_pem_full_path} --keyfile ${key_pem_full_path}",
+    special => $_rotate_frequency,
     require => File['/usr/local/bin/deploy-ssl-certificate'],
   }
 

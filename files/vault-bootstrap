@@ -636,7 +636,7 @@ vault write auth/app-id/map/app-id/$app_id value=puppet display_name=puppet
 vault write auth/app-id/map/user-id/$user_id value=$app_id cidr_block=$cidr_block
 
 # Give helper applications the required access to run locally
-vault-auth-user --app-id=@deploy-ssl-certificate --cidr-block=127.0.0.1/32
+vault-auth-user --app-id=@deploy-ssl-certificate --cidr-block=$cidr_block
 
 # Set up temporary access for bootstrapping cluster.  It provides limited
 # access (it can read and write user-ids for the App ID auth backend and

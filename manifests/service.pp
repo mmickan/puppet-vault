@@ -13,12 +13,10 @@ class vault::service {
     fail("Use of private class ${name} by ${caller_module_name}")
   }
 
-  if $vault::manage_service {
-    service { 'vault':
-      ensure  => 'running',
-      enable  => true,
-      restart => '/bin/echo "Vault requires a restart"',
-    }
+  service { 'vault':
+    ensure  => 'running',
+    enable  => true,
+    restart => '/bin/echo -e "Vault requires a restart.\nThis will seal the Vault and it cannot be unsealed by Puppet.\nPlease perform the restart and unseal manually."',
   }
 
 }

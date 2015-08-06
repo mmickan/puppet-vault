@@ -9,7 +9,9 @@ describe 'vault', :type => :class do
 
   context 'config with bootstrap enabled' do
     let(:params) { {
-      :admins => ['admin'],
+      :admins    => ['admin'],
+      :server    => true,
+      :bootstrap => true,
     } }
 
     it { should compile.with_all_deps }
@@ -28,7 +30,8 @@ describe 'vault', :type => :class do
 
   context 'with bootstrap disabled' do
     let(:params) { {
-      :bootstrap => false,
+      :server        => true,
+      :bootstrap     => false,
       :tls_cert_file => '/tmp/cert_file',
       :tls_key_file  => '/tmp/key_file',
     } }
@@ -46,6 +49,7 @@ describe 'vault', :type => :class do
     let(:params) { {
       :config_file => '/tmp/vault.hcl',
       :admins      => ['admin'],
+      :server      => true,
     } }
 
     it { should compile.with_all_deps }
@@ -57,6 +61,7 @@ describe 'vault', :type => :class do
     let(:params) { {
       :init_style => 'unsupported',
       :admins     => ['admin'],
+      :server     => true,
     } }
 
     it { should_not compile.and_raise_error(Puppet::ParseError) }

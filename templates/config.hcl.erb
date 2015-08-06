@@ -52,7 +52,7 @@ address = "<%= scope['vault::listener_address'] %>:<%= scope['vault::listener_po
 <%- if scope['vault::stats_type'] then -%>
 
 telemetry {
-  <%- if scope['vault:stats_type'] == 'statsite' then -%>
+  <%- if scope['vault::stats_type'] == 'statsite' then -%>
   statsite_address = "<%= scope['vault::stats_address'] %>"
   <%- else -%>
   statsd_address = "<%= scope['vault::stats_address'] %>"

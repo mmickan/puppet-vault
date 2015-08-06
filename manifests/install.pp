@@ -25,7 +25,7 @@ class vault::install {
   }
 
   if $::operatingsystem != 'darwin' {
-    ensure_packages(['unzip'])
+    ensure_packages('unzip')
   }
   staging::file { 'vault.zip':
     source => $vault::real_download_url
@@ -41,11 +41,60 @@ class vault::install {
     mode  => '0555',
   }
 
+  ensure_packages('jq')
+
+  file { "${vault::bin_dir}/vault-auth-app":
+    source  => 'puppet:///modules/vault/vault-auth-app',
+    owner   => $vault::user,
+    group   => $vault::group,
+    mode    => '0550',
+    require => Package['jq'],
+  }
+
+  file { "${vault::bin_dir}/vault-auth-user":
+    source  => 'puppet:///modules/vault/vault-auth-user',
+    owner   => $vault::user,
+    group   => $vault::group,
+    mode    => '0550',
+    require => Package['jq'],
+  }
+
+  file { "${vault::bin_dir}/vault-check-mount":
+    source  => 'puppet:///modules/vault/vault-check-mount',
+    owner   => $vault::user,
+    group   => $vault::group,
+    mode    => '0550',
+    require => Package['jq'],
+  }
+
+  file { "${vault::bin_dir}/vault-policy":
+    source  => 'puppet:///modules/vault/vault-policy',
+    owner   => $vault::user,
+    group   => $vault::group,
+    mode    => '0550',
+    require => Package['jq'],
+  }
+
+  file { "${vault::bin_dir}/vault-secret-pki":
+    source  => 'puppet:///modules/vault/vault-secret-pki',
+    owner   => $vault::user,
+    group   => $vault::group,
+    mode    => '0550',
+    require => Package['jq'],
+  }
+
+  file { "${vault::bin_dir}/deploy-ssl-certificate":
+    source  => 'puppet:///modules/vault/deploy-ssl-certificate',
+    owner   => $vault::user,
+    group   => $vault::group,
+    mode    => '0550',
+    require => Package['jq'],
+  }
+
   if $vault::manage_user {
     user { $vault::user:
       ensure => 'present',
       system => true,
-      groups => $vault::extra_groups,
     }
 
     if $vault::manage_group {

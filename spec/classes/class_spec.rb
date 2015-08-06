@@ -10,12 +10,27 @@ describe 'vault', :type => :class do
   } }
 
   context 'with default settings' do
-    it { should_not compile.and_raise_error(Puppet::ParseError) }
+    it { should compile.with_all_deps }
   end
 
   context 'with admins' do
     let(:params) { {
       :admins => ['admin'],
+    } }
+
+    it { should compile.with_all_deps }
+
+    it { should contain_class('vault::install') }
+    it { should_not contain_class('vault::config') }
+    it { should_not contain_class('vault::service') }
+
+    it { should_not contain_class('vault::debug') }
+  end
+
+  context 'with server enabled' do
+    let(:params) { {
+      :admins => ['admin'],
+      :server => true,
     } }
 
     it { should compile.with_all_deps }

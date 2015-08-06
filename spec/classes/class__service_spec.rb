@@ -7,20 +7,21 @@ describe 'vault', :type => :class do
     :path         => '/usr/bin:/bin:/usr/sbin:/sbin',
   } }
 
-  let(:params) { {
-    :admins => ['admin'],
-  } }
+  context 'service with server enabled' do
+    let(:params) { {
+      :admins => ['admin'],
+      :server => true,
+    } }
 
-  context 'service with default settings' do
     it { should compile.with_all_deps }
 
     it { should contain_service('vault').with_ensure('running') }
   end
 
-  context 'service without managed_service' do
+  context 'service without server enabled' do
     let(:params) { {
-      :manage_service => false,
-      :admins         => ['admin'],
+      :admins  => ['admin'],
+      :server  => false,
     } }
 
     it { should compile.with_all_deps }

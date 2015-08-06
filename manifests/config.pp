@@ -30,6 +30,10 @@ class vault::config {
           group  => 'root',
           mode   => '0755',
         }
+        $bootstrap_requires = [
+          File['/etc/init/vault.conf'],
+          File['/etc/init.d/vault'],
+        ]
       }
       # No templates yet for other init styles, but should be easy enough to
       # add (see the KyleAnderson/consul for a starting point)
@@ -98,7 +102,11 @@ class vault::config {
   }
 
   if $vault::bootstrap {
-    include vault::tools
+
+    $local_cidr_block = $vault::advertise_addr ? {
+      /:/     => "${vault::advertise_addr}/128",
+      default => "${vault::advertise_addr}/32",
+    }
 
     file { '/usr/local/bin/vault-bootstrap':
       source => 'puppet:///modules/vault/vault-bootstrap',
@@ -107,12 +115,17 @@ class vault::config {
       mode   => '0700',
     } ->
     exec { 'vault-bootstrap':
-      command => "vault-bootstrap --puppet-app-id=${vault::puppet_app_id} --common-name=${vault::common_name} --alt-names=${vault::alt_names_string} -- ${vault::admins_string}",
-      path    => "/usr/local/bin:${::path}",
+      command => "vault-bootstrap --puppet-app-id=${vault::puppet_app_id} --common-name=${vault::common_name} --alt-names=${vault::alt_names_string} --cidr-block=${local_cidr_block} -- ${vault::admins_string}",
+      path    => "${::vault::bin_dir}:${::path}",
       unless  => '/usr/bin/test -f /etc/vault/ssl/vault.cert.pem',
-      require => [
-        File['/usr/local/bin/deploy-ssl-certificate'],
-      ],
+      require => flatten([
+        File["${::vault::bin_dir}/deploy-ssl-certificate"],
+        File["${::vault::bin_dir}/vault-auth-user"],
+        File["${::vault::bin_dir}/vault"],
+        File['/etc/vault/ssl'],
+        File['vault config.hcl'],
+        $bootstrap_requires,
+      ]),
     }
   } else {
     if $vault::tls_cert_file != '/etc/vault/ssl/vault.cert.pem' {

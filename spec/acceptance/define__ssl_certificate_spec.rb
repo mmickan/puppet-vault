@@ -7,8 +7,11 @@ describe 'vault::ssl_certificate defined type' do
     it 'should work with no errors' do
       pp = <<-EOS
       class { 'vault':
-        admins        => ['vagrant'],
-        puppet_app_id => 'puppet-acceptance-test-app-id',
+        admins         => ['vagrant'],
+        puppet_app_id  => 'puppet-acceptance-test-app-id',
+        server         => true,
+        bootstrap      => true,
+        advertise_addr => '127.0.0.1',
       }
       ->
 

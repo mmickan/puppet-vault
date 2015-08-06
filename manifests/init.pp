@@ -38,15 +38,17 @@
 #   file will be written.
 #   Default: /var/lib/puppet/debug
 #
-# [*manage_service*]
-#   Boolean.  Manage the vault service with puppet.
-#   Default: true
+# [*server*]
+#   Boolean.  Configure Vault as a server.  If this is set to false, Vault
+#   and the utility scripts this module provides will be installed, but the
+#   Vault server will not be configured nor will the service be started.
+#   Default: false
 #
 # [*bootstrap*]
 #   Boolean.  Bootstrap the Vault instance, including setting up SSL,
 #   running vault init, unsealing and safely distributing the initial root
 #   token and unseal keys to the admins.
-#   Default: true
+#   Default: false
 #
 # [*puppet_app_id*]
 #   String.  When $bootstrap is true, specifies Puppet's app-id for
@@ -201,6 +203,18 @@
 #   Boolean.  If true, telemetry is prefixed with machine hostname.
 #   Default: true
 #
+# [*lease_duration*]
+#   String.  The default lease duration for use by various resources.  This
+#   is the maximum length of time in seconds (no suffix) or hours (an 'h'
+#   suffix) data obtained from Vault should be considered valid.
+#   Default: 168h  (one week)
+#
+# [*rotate_frequency*]
+#   String.  The default frequency at which to rotate data obtained from
+#   Vault, for use by various resources.
+#   Default: daily
+#   Valid values: hourly, daily, weekly, monthly, yearly
+#
 # === Example usage
 #
 #  include vault
@@ -217,8 +231,8 @@ class vault(
   $download_extension = 'zip',
   $debug              = false,
   $debug_dir          = '/var/lib/puppet/debug',
-  $manage_service     = true,
-  $bootstrap          = true,
+  $server             = false,
+  $bootstrap          = false,
   $puppet_app_id      = 'puppet',
   $common_name        = 'vault',
   $alt_names          = ["IP:${::ipaddress}"],
@@ -251,13 +265,15 @@ class vault(
   $stats_type         = false,
   $stats_address      = '127.0.0.1:8125',
   $stats_host_prefix  = true,
+  $lease_duration     = '168h',
+  $rotate_frequency   = 'daily',
 ) {
 
   # validate inputs
   validate_re($version, '^\d+\.\d+\.\d+$', 'vault version is not valid')
   validate_bool($debug)
   validate_absolute_path($debug_dir)
-  validate_bool($manage_service)
+  validate_bool($server)
   validate_bool($bootstrap)
   validate_string($common_name)
   validate_array($alt_names)
@@ -306,11 +322,14 @@ class vault(
   $real_download_url = pick($download_url, "${download_url_base}${version}_${os}_${arch}.${download_extension}")
 
   # instantiate managed resources
-  class { 'vault::install': } ->
-  class { 'vault::config': } ~>
-  class { 'vault::service': }
+  class { 'vault::install': }
 
-  include vault::tools
+  if $server {
+    Class['vault::install'] ->
+    class { 'vault::config': } ~>
+    class { 'vault::service': }
+  }
+
 
   if $debug {
     class { 'vault::debug': }

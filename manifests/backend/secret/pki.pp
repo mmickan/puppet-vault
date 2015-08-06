@@ -26,21 +26,22 @@
 #
 define vault::backend::secret::pki(
   $token = undef,
-  $addr  = 'https://127.0.0.1:8200',
+  $addr  = "${::vault::advertise_scheme}://${::vault::advertise_addr}:${::vault::advertise_port}",
 ) {
 
-  include ::vault::tools
+  if ! defined(Class['vault']) {
+    include vault
+  }
 
-  if $token {
-    $_auth = "--token=${token}"
-  } else {
-    $_auth = "--app-id=${vault::puppet_app_id}"
+  $_auth = $token ? {
+    undef   => "--app-id=${vault::puppet_app_id}",
+    default => "--token=${token}",
   }
 
   exec { "vault-secret-pki ${name}":
-    command => "vault-secret-pki ${_auth} -- ${name}",
-    unless  => "vault-check-mount ${_auth} -- pki-${name}",
-    path    => "/usr/local/bin:${::path}",
+    command => "vault-secret-pki --addr=${addr} ${_auth} -- ${name}",
+    unless  => "vault-check-mount --addr=${addr} ${_auth} -- pki-${name}",
+    path    => "${::vault::bin_dir}:${::path}",
   }
 
 }

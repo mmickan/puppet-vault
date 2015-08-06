@@ -11,6 +11,9 @@
 #   of the filename in /etc/vault/policies and as the name of the policy in
 #   Vault.  Defaults to the name of the resource.
 #
+# [*policy*]
+#   Hash.  A mapping of paths to policies.  Required.
+#
 # [*token*]
 #   String.  Authentication token to authenticate to Vault.  If not
 #   provided, the helper script will attempt to log in using
@@ -19,10 +22,8 @@
 #
 # [*addr*]
 #   String.  The address of the Vault instance to connect to.
-#   Default: https://127.0.0.1:8200
-#
-# [*policy*]
-#   Hash.  A mapping of paths to policies.  Required.
+#   Default: Based on $vault::advertise_scheme, $vault::advertise_addr, and
+#            $vault::advertise_port
 #
 # === Example usage
 #
@@ -37,8 +38,22 @@
 define vault::policy(
   $policy,
   $token  = undef,
-  $addr   = 'https://127.0.0.1:8200',
+  $addr   = undef,
 ) {
+
+  if ! defined(Class['vault']) {
+    include vault
+  }
+
+  $_addr = $addr ? {
+    undef   => "${::vault::advertise_scheme}://${::vault::advertise_addr}:${::vault::advertise_port}",
+    default => $addr,
+  }
+
+  $_auth = $token ? {
+    undef   => "--app-id=${vault::puppet_app_id}",
+    default => "--token=${token}",
+  }
 
   ensure_resource('file', '/etc/vault/policies', {
     ensure => 'directory',
@@ -52,20 +67,15 @@ define vault::policy(
     owner   => 'root',
     group   => 'root',
     mode    => '0600',
-  }
-
-  if $token {
-    $_auth = "--token=${token}"
-  } else {
-    $_auth = "--app-id=${vault::puppet_app_id}"
-  }
-
+  } ~>
   exec { "vault policy-write ${name}":
-    command     => "vault-policy ${_auth} --addr=${addr} -- ${name}",
-    path        => "/usr/local/bin:${::path}",
+    command     => "vault-policy ${_auth} --addr=${_addr} -- ${name}",
+    path        => "${::vault::bin_dir}:${::path}",
     refreshonly => true,
-    subscribe   => File["/etc/vault/policies/${name}.hcl"],
-    require     => File["/etc/vault/policies/${name}.hcl"],
+    require     => [
+      File["/etc/vault/policies/${name}.hcl"],
+      File["${::vault::bin_dir}/vault-policy"],
+    ],
   }
 
 }
