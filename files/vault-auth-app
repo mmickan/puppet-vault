@@ -3,7 +3,9 @@
 # vault-auth-app
 #
 # Helper script to authorise a given application to access a list of roles
-# within Vault using the app-id authentication backend.
+# within Vault using the app-id authentication backend.  Note that this
+# script tries to *add* to any existing roles configured, as opposed to
+# replacing the list of roles the way vault does natively.
 #
 ######################################################################
 # Script configuration
@@ -30,6 +32,11 @@ usage(){
   --help                 Display this mess
   --show-app-id          Output this application's app-id (for Vault auth to
                          App ID auth backend)
+  --check                Determines whether this script would take action
+                         with the remaining parameters.  Script returns
+                         success if changes are not required or failure if
+                         changes are required.  Intended for use in an
+                         "unless" argument with Puppet's exec resource
   --token <token>        Use <token> to authenticate with vault.  If not
                          provided, VAULT TOKEN environment variable will be
                          used.  Prefix with @ to read token from a file
@@ -37,8 +44,9 @@ usage(){
                          VAULT_ADDR environment variable as default, and
                          falls back to https://127.0.0.1:8200 if neither the
                          parameter nor the environment variable are set
-  --app-id <id>     Use <id> to authenticate to App ID auth backend.  If not
-                    specified, this script's default app-id is used
+  --app-id <id>          Use <id> to authenticate to App ID auth backend.
+                         If not specified, this script's default app-id is
+                         used
   --enable-backend       Enable the App ID auth backend if it's not already
                          enabled
 
@@ -85,6 +93,19 @@ strip_leading_at(){
   fi
 }
 
+vault_logout(){
+  if [ ${generated_token:-0} -eq 1 ]; then
+    # attempt to clean up (success predominantly depends on there being a
+    # policy in effect that allows it)
+    curl \
+      -s \
+      -o /dev/null \
+      -X POST \
+      -H "X-Vault-Token: ${vault_token}" \
+      ${vault_addr}/v1/auth/token/revoke/${vault_token}
+  fi
+}
+
 log(){ echo -e "\e[32m\e[1m--> ${1}...\e[0m"; }
 warn(){ echo -e "\e[33m\e[1mWARNING: ${1}\e[0m"; }
 error(){ echo -e "\e[31m\e[1mERROR: ${1}\e[0m"; }
@@ -94,7 +115,7 @@ fatal(){ echo -e "\e[31m\e[1mFATAL: ${1}\e[0m"; exit 1; }
 # Script start
 ######################################################################
 
-PARSED_OPTIONS=$(getopt -n "$0" -o hvst:a:e --long "help,version,show-app-id,token:,addr:,app-id:,enable-backend" -- "$@")
+PARSED_OPTIONS=$(getopt -n "$0" -o hvsct:a:e --long "help,version,show-app-id,check,token:,addr:,app-id:,enable-backend" -- "$@")
 
 if [ $? -ne 0 ]; then
   usage
@@ -109,6 +130,9 @@ while true; do
       version;;
     -s|--show-app-id)
       show_app_id;;
+    -c|--check)
+      check=1
+      shift;;
     -t|--token)
       vault_token=$2
       shift 2;;
@@ -186,6 +210,10 @@ fi
 
 # ensure App ID auth backend is enabled
 if ! vault auth -methods | grep -qs '^app-id/'; then
+  if [ "$check" -eq "1" ]; then
+    vault_logout
+    exit 10
+  fi
   if [ "$enable_backend" -eq "1" ]; then
     vault auth-enable app-id
   else
@@ -196,14 +224,48 @@ if ! vault auth -methods | grep -qs '^app-id/'; then
   fatal "Unable to enable App ID auth backend"
 fi
 
-# configure app-id permissions
-vault write auth/app-id/map/app-id/$app_id value="$roles" display_name=$app_name
+# grab existing settings
+json=`curl \
+  -s \
+  -H "X-Vault-Token: $vault_token" \
+  ${vault_addr}/v1/auth/app-id/map/app-id/${app_id}`
 
-if [ ${generated_token:-0} -eq 1 ]; then
-  # clean up after ourself
-  curl \
-    -s \
-    -X POST \
-    -H "X-Vault-Token: ${vault_token}" \
-    ${vault_addr}/v1/auth/token/revoke/${vault_token}
+display_name=`echo ${json} | jq -r '.["data"]["display_name"]'`
+existing_roles=`echo ${json} | jq -r '.["data"]["value"]'`
+
+declare -A existing_roles_hash
+for role in `echo ${existing_roles} | tr ',' ' '`; do
+  existing_roles_hash[$role]=1
+done
+
+declare -A roles_hash
+for role in `echo ${roles} | tr ',' ' '`; do
+  roles_hash[$role]=1
+done
+
+if [ "$check" -eq "1" ]; then
+  if [ "$display_name" != "$app_name" ]; then
+    # a change to the display name has been requested
+    vault_logout
+    exit 1
+  fi
+  for role in ${!roles_hash[@]}; do
+    if [ "${existing_roles_hash[$role]}" != "1" ]; then
+      # a role has been requested that isn't already configured
+      vault_logout
+      exit 2
+    fi
+  done
+else
+  # merge existing and request roles into a single de-duplicated list
+  for role in ${!existing_roles_hash[@]}; do
+    roles_hash[$role]=1
+  done
+  new_roles=`echo ${!roles_hash[@]} | xargs -n1 | sort -u | xargs | tr ' ' ','`  # convert hash to comma separated alphabetical list
+
+  # configure app-id permissions
+  vault write auth/app-id/map/app-id/$app_id value="$new_roles" display_name=$app_name
 fi
+
+vault_logout
+exit 0

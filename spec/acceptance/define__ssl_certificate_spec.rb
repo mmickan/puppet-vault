@@ -18,8 +18,8 @@ describe 'vault::ssl_certificate defined type' do
       # Allow Puppet to configure the PKI secret backend for the *.consul
       # domain, and then configure it
       exec { 'Authorise puppet':
-        command => 'vault-auth-app --app-id=puppet-acceptance-test-app-id --enable-backend -- puppet puppet-acceptance-test-app-id puppet,configure-pki-consul && touch /tmp/puppet_app_authorised',
-        creates => '/tmp/puppet_app_authorised',
+        command => 'vault-auth-app --app-id=puppet-acceptance-test-app-id --enable-backend -- puppet puppet-acceptance-test-app-id puppet,configure-pki-consul',
+        unless  => 'vault-auth-app --check --app-id=puppet-acceptance-test-app-id --enable-backend -- puppet puppet-acceptance-test-app-id puppet,configure-pki-consul',
         path    => "/usr/local/bin:${::path}",
         require => File['/usr/local/bin/vault-auth-app'],
       }
@@ -38,10 +38,10 @@ describe 'vault::ssl_certificate defined type' do
       # Allow the deploy-ssl-certificate script to issue certificates in the
       # *.consul domain
       exec { 'Authorise deploy-ssl-certificate app':
-        command     => 'vault-auth-app --app-id=puppet-acceptance-test-app-id --enable-backend -- deploy-ssl-certificate @deploy-ssl-certificate deploy-ssl-certificate && touch /tmp/deploy-ssl-certificate_app_authorised',
-        creates     => '/tmp/deploy-ssl-certificate_app_authorised',
-        path        => "/usr/local/bin:${::path}",
-        require     => [
+        command => 'vault-auth-app --app-id=puppet-acceptance-test-app-id --enable-backend -- deploy-ssl-certificate @deploy-ssl-certificate deploy-ssl-certificate',
+        unless  => 'vault-auth-app --check --app-id=puppet-acceptance-test-app-id --enable-backend -- deploy-ssl-certificate @deploy-ssl-certificate deploy-ssl-certificate',
+        path    => "/usr/local/bin:${::path}",
+        require => [
           File['/usr/local/bin/deploy-ssl-certificate'],
           File['/usr/local/bin/vault-auth-app'],
         ],
