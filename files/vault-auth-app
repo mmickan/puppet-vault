@@ -210,11 +210,11 @@ fi
 
 # ensure App ID auth backend is enabled
 if ! vault auth -methods | grep -qs '^app-id/'; then
-  if [ "$check" -eq "1" ]; then
+  if [ "$check" == "1" ]; then
     vault_logout
     exit 10
   fi
-  if [ "$enable_backend" -eq "1" ]; then
+  if [ "$enable_backend" == "1" ]; then
     vault auth-enable app-id
   else
     fatal "App ID auth backend is not enabled (need --enable-backend?)"
