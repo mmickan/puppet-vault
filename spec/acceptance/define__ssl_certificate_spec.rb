@@ -13,47 +13,10 @@ describe 'vault::ssl_certificate defined type' do
         bootstrap      => true,
         advertise_addr => '127.0.0.1',
       }
-      ->
+      -> vault::backend::secret::pki{ 'consul': }
 
-      # Allow Puppet to configure the PKI secret backend for the *.consul
-      # domain, and then configure it
-      exec { 'Authorise puppet':
-        command => 'vault-auth-app --app-id=puppet-acceptance-test-app-id --enable-backend -- puppet puppet-acceptance-test-app-id puppet,configure-pki-consul',
-        unless  => 'vault-auth-app --check --app-id=puppet-acceptance-test-app-id --enable-backend -- puppet puppet-acceptance-test-app-id puppet,configure-pki-consul',
-        path    => "/usr/local/bin:${::path}",
-        require => File['/usr/local/bin/vault-auth-app'],
-      }
-      ->
-      vault::policy { 'configure-pki-consul':
-        policy => {
-          'pki-consul/config/ca' => 'sudo',
-          'secret/ssl/*'         => 'read',
-          'pki-consul/*'         => 'write',
-        }
-      }
-      ->
-      vault::backend::secret::pki{ 'consul': }
-      ->
-
-      # Allow the deploy-ssl-certificate script to issue certificates in the
-      # *.consul domain
-      exec { 'Authorise deploy-ssl-certificate app':
-        command => 'vault-auth-app --app-id=puppet-acceptance-test-app-id --enable-backend -- deploy-ssl-certificate @deploy-ssl-certificate deploy-ssl-certificate',
-        unless  => 'vault-auth-app --check --app-id=puppet-acceptance-test-app-id --enable-backend -- deploy-ssl-certificate @deploy-ssl-certificate deploy-ssl-certificate',
-        path    => "/usr/local/bin:${::path}",
-        require => [
-          File['/usr/local/bin/deploy-ssl-certificate'],
-          File['/usr/local/bin/vault-auth-app'],
-        ],
-      }
-      ->
-      vault::policy { 'deploy-ssl-certificate':
-        policy => { 'pki-consul/issue/consul' => 'write' }
-      }
-      ->
-
-      # Finally, deploy an SSL certificate/key pair
-      vault::ssl_certificate { 'test-service':
+      # deploy an SSL certificate/key pair
+      -> vault::ssl_certificate { 'test-service':
         host      => 'host.node.consul',
         domain    => 'consul',
         directory => '/tmp',
@@ -63,6 +26,16 @@ describe 'vault::ssl_certificate defined type' do
       # Run it twice and test for idempotency
       apply_manifest(pp, :future_parser => true, :catch_failures => true)
       apply_manifest(pp, :future_parser => true, :catch_changes => true)
+    end
+
+    describe file('/tmp/host.node.consul.cert.pem') do
+      it { should be_mode 444 }
+      its(:content) { should match /BEGIN CERTIFICATE/ }
+    end
+
+    describe file('/tmp/host.node.consul.key.pem') do
+      it { should be_mode 400 }
+      its(:content) { should match /BEGIN RSA PRIVATE KEY/ }
     end
 
   end

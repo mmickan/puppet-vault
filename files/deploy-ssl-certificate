@@ -168,6 +168,8 @@ private_key=`echo $issue_json | jq -r '.["data"]["private_key"]' 2>/dev/null | s
 
 if echo "$certificate" | openssl x509 -noout 2>/dev/null; then
   if echo "$issuing_ca" | openssl x509 -noout 2>/dev/null; then
+    touch ${certfile}.tmp
+    chmod 0444 ${certfile}.tmp
     echo "$certificate" > ${certfile}.tmp
     echo "$issuing_ca" >> ${certfile}.tmp
   else
@@ -180,13 +182,17 @@ fi
 if echo "$private_key" | openssl rsa -noout 2>/dev/null; then
   mv ${certfile}.tmp ${certfile}
   if [ "$certfile" == "$keyfile" ]; then
+    chmod 0400 $keyfile
     echo "$private_key" >> $keyfile
     log 'Deployed certificate bundle'
   else
+    touch $keyfile
+    chmod 0400 $keyfile
     echo "$private_key" > $keyfile
     log 'Deployed certificate and key'
   fi
 else
+  rm -f ${certfile}.tmp
   fatal 'SSL private key is not valid'
 fi
 

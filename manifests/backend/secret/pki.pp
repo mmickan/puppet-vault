@@ -38,10 +38,44 @@ define vault::backend::secret::pki(
     default => "--token=${token}",
   }
 
-  exec { "vault-secret-pki ${name}":
+  # TODO: exit without error if vault is sealed (good for HA vault where
+  # only the primary is unsealed during the initial puppet run?)
+  exec { "authorise puppet to configure PKI secret backend for ${name}":
+    command => "vault-auth-app --addr=https://${::vault::advertise_addr}:8200 --app-id=${::vault::puppet_app_id} -- puppet ${::vault::puppet_app_id} configure-pki-${name}",
+    unless  => "vault-auth-app --check --addr=https://${::vault::advertise_addr}:8200 --app-id=${::vault::puppet_app_id} -- puppet ${::vault::puppet_app_id} configure-pki-${name}",
+    path    => "/usr/local/bin:${::path}",
+    require => [
+      File['/usr/local/bin/vault-auth-app'],
+      Exec['vault-bootstrap'],
+    ],
+  }
+  -> vault::policy { "configure-pki-${name}":
+    policy => {
+      "pki-${name}/config/ca" => 'sudo',
+      'secret/ssl/*'          => 'read',
+      "pki-${name}/*"         => 'write',
+    }
+  }
+  -> exec { "mount PKI secret backend for ${name}":
     command => "vault-secret-pki --addr=${addr} ${_auth} -- ${name}",
     unless  => "vault-check-mount --addr=${addr} ${_auth} -- pki-${name}",
     path    => "${::vault::bin_dir}:${::path}",
   }
+  -> Vault::Ssl_certificate <| domain == $name |>
+
+  exec { "authorise deploy-ssl-certificate app for ${name}":
+    command => "vault-auth-app --addr=https://${::vault::advertise_addr}:8200 --app-id=${::vault::puppet_app_id} --enable-backend -- deploy-ssl-certificate @deploy-ssl-certificate deploy-ssl-certificate-${name}",
+    unless  => "vault-auth-app --check --addr=https://${::vault::advertise_addr}:8200 --app-id=${::vault::puppet_app_id} --enable-backend -- deploy-ssl-certificate @deploy-ssl-certificate deploy-ssl-certificate-${name}",
+    path    => "/usr/local/bin:${::path}",
+    require => [
+      File['/usr/local/bin/deploy-ssl-certificate'],
+      File['/usr/local/bin/vault-auth-app'],
+      Exec['vault-bootstrap'],
+    ],
+  }
+  -> vault::policy { "deploy-ssl-certificate-${name}":
+    policy => { "pki-${name}/issue/consul" => 'write' }
+  }
+  -> Vault::Ssl_certificate <| domain == $name |>
 
 }
