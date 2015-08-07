@@ -230,8 +230,8 @@ json=`curl \
   -H "X-Vault-Token: $vault_token" \
   ${vault_addr}/v1/auth/app-id/map/app-id/${app_id}`
 
-display_name=`echo ${json} | jq -r '.["data"]["display_name"]'`
-existing_roles=`echo ${json} | jq -r '.["data"]["value"]'`
+display_name=`echo ${json} | jq -r '.["data"]["display_name"] // ""'`
+existing_roles=`echo ${json} | jq -r '.["data"]["value"] // ""'`
 
 declare -A existing_roles_hash
 for role in `echo ${existing_roles} | tr ',' ' '`; do
