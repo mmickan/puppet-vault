@@ -126,6 +126,7 @@ class vault::config {
         File['vault config.hcl'],
         $bootstrap_requires,
       ]),
+      before => Service['vault'],
     }
   } else {
     if $vault::tls_cert_file != '/etc/vault/ssl/vault.cert.pem' {

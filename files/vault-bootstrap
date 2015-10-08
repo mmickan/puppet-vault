@@ -257,8 +257,7 @@ done
 
 
 if ! vault_backend_ready; then
-  log "Vault backend not ready - will not bootstrap yet"
-  exit 0
+  fatal "Vault backend not ready - will not bootstrap yet"
 fi
 
 usernames=( $* )
