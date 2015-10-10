@@ -586,6 +586,21 @@ for i in $(seq 0 $((key_shares-1))); do
     > "/home/${usernames[$i]}/vault_initial_root_token"
 done
 
+# wait until vault is completely ready
+for i in {1..60}; do
+  health=`curl -s https://127.0.0.1:8200/v1/sys/health`
+  initialised=`echo $health | jq '.["initialized"]' 2>/dev/null`
+  sealed=`echo $health | jq '.["sealed"]' 2>/dev/null`
+  standby=`echo $health | jq '.["standby"]' 2>/dev/null`
+  if [[ "$initialised" == "true" && "$sealed" == "false" && $standby == "false" ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ "$initialised" != "true" || "$sealed" != "false" || $standby != "false" ]]; then
+  fatal "Vault should be ready for use, but is not"
+fi
+
 # Store certificate authority certs and keys in Vault, and remove keys from
 # disk
 vault write secret/ssl/certs/ca.cert.pem \
