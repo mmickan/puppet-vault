@@ -101,6 +101,16 @@ export ALTNAME=''
 
 ec2_instance_id=`facter ec2_instance_id`
 uuid=`facter uuid`
+if [ "$uuid" == "Not Settable" ]; then
+  if [ ! -e /etc/UUID ]; then
+    touch /etc/UUID
+    chown root:root /etc/UUID
+    chmod 0600 /etc/UUID
+    uuidgen > /etc/UUID
+    chmod 0400 /etc/UUID
+  fi
+  uuid=`cat /etc/UUID`
+fi
 
 # parameter defaults
 common_name=vault

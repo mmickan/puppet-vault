@@ -15,6 +15,16 @@ auth_app_id='426CB96A-A754-44BC-A16C-29FCCC59A0FF'
 
 auth_user_id=`facter ec2_instance_id`
 auth_user_id=${auth_user_id:-`sudo facter uuid`}
+if [ "$auth_user_id" == "Not Settable" ]; then
+  if [ ! -e /etc/UUID ]; then
+    touch /etc/UUID
+    chown root:root /etc/UUID
+    chmod 0600 /etc/UUID
+    uuidgen > /etc/UUID
+    chmod 0400 /etc/UUID
+  fi
+  auth_user_id=`cat /etc/UUID`
+fi
 
 vault_addr=${VAULT_ADDR:-https://127.0.0.1:8200}
 
