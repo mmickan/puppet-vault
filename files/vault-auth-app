@@ -274,7 +274,7 @@ else
   new_roles=`echo ${!roles_hash[@]} | xargs -n1 | sort -u | xargs | tr ' ' ','`  # convert hash to comma separated alphabetical list
 
   # configure app-id permissions
-  vault write auth/app-id/map/app-id/$app_id value="$new_roles" display_name=$app_name
+  vault write auth/app-id/map/app-id/$app_id value="$new_roles" display_name=$app_name || exit 3
 fi
 
 vault_logout
