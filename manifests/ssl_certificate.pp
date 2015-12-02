@@ -131,13 +131,13 @@ define vault::ssl_certificate(
   $ip_sans_array   = $aliases.filter |$x| { is_ip_address($x) }
 
   if size($alt_names_array) > 0 {
-    $alt_names = join(['--alt_names ', '"', join($alt_names_array, ', '), '"'], '')
+    $alt_names = join(['--alt_names ', '"', join($alt_names_array, ','), '"'], '')
   } else {
     $alt_names = ''
   }
 
   if size($ip_sans_array) > 0 {
-    $ip_sans = join(['--ip_sans ', '"', join($ip_sans_array, ', '), '"'], '')
+    $ip_sans = join(['--ip_sans ', '"', join($ip_sans_array, ','), '"'], '')
   } else {
     $ip_sans = ''
   }
