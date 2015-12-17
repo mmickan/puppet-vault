@@ -161,7 +161,7 @@ if [ -n "$ip_sans" ]; then
 fi
 
 if [ -n "$lease" ]; then
-  issue_req="${issue_req},\"lease\":\"${lease}\""
+  issue_req="${issue_req},\"ttl\":\"${lease}\""
 fi
 
 issue_req="${issue_req}}"
