@@ -220,14 +220,14 @@
 #  include vault
 #
 class vault(
-  $version            = '0.2.0',
+  $version            = '0.4.0',
   $user               = 'vault',
   $group              = 'vault',
   $manage_user        = true,
   $manage_group       = true,
   $bin_dir            = '/usr/local/bin',
   $download_url       = undef,
-  $download_url_base  = 'https://dl.bintray.com/mitchellh/vault/vault_',
+  $download_url_base  = 'https://releases.hashicorp.com/vault',
   $download_extension = 'zip',
   $debug              = false,
   $debug_dir          = '/var/lib/puppet/debug',
@@ -319,7 +319,7 @@ class vault(
     }
   }
   $os = downcase($::kernel)
-  $real_download_url = pick($download_url, "${download_url_base}${version}_${os}_${arch}.${download_extension}")
+  $real_download_url = pick($download_url, "${download_url_base}/${version}/vault_${version}_${os}_${arch}.${download_extension}")
 
   # instantiate managed resources
   class { 'vault::install': }
