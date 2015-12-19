@@ -101,7 +101,7 @@ export ALTNAME=''
 
 ec2_instance_id=`facter ec2_instance_id`
 uuid=`facter uuid`
-if [ "$uuid" == "Not Settable" ]; then
+if [ "$uuid" == "Not Settable" ] || [ -z "$uuid" ]; then
   if [ ! -e /etc/UUID ]; then
     touch /etc/UUID
     chown root:root /etc/UUID

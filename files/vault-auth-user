@@ -15,7 +15,7 @@ auth_app_id='426CB96A-A754-44BC-A16C-29FCCC59A0FF'
 
 auth_user_id=`facter ec2_instance_id`
 auth_user_id=${auth_user_id:-`sudo facter uuid`}
-if [ "$auth_user_id" == "Not Settable" ]; then
+if [ "$auth_user_id" == "Not Settable" ] || [ -z "$auth_user_id" ]; then
   if [ ! -e /etc/UUID ]; then
     touch /etc/UUID
     chown root:root /etc/UUID
