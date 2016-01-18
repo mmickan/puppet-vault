@@ -167,12 +167,17 @@ vault_backend(){
 }
 
 consul_ready(){
-  leader=`curl -s http://127.0.0.1:8500/v1/status/leader | jq -r . 2>&1`
-  if [ -n "$leader" ]; then
-    return 0
-  else
-    return 1
-  fi
+  # if consul has only just been started before this runs, it may not have
+  # completed startup, so give it several seconds to settle if required
+  for i in 1 2 3 4 5; do
+    leader=`curl -s http://127.0.0.1:8500/v1/status/leader | jq -r . 2>&1`
+    if [ -n "$leader" ]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  return 1
 }
 
 vault_backend_ready(){
