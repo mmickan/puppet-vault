@@ -1,0 +1,174 @@
+#!/bin/bash
+#
+# obtain-ssh-access
+#
+# Obtain an SSH private key in order to access a named service (via SSH).
+#
+######################################################################
+# Script configuration
+######################################################################
+
+set -e
+
+version=0.1.0
+
+app_id='2D97EA32-7A5D-470B-96F5-3BBADB0A9C5D'
+
+user_id=`facter ec2_instance_id`
+user_id=${user_id:-`sudo facter uuid`}
+if [ "$user_id" == "Not Settable" ] || [ -z "$user_id" ]; then
+  if [ ! -e /etc/UUID ]; then
+    touch /etc/UUID
+    chown root:root /etc/UUID
+    chmod 0600 /etc/UUID
+    uuidgen > /etc/UUID
+    chmod 0400 /etc/UUID
+  fi
+  user_id=`cat /etc/UUID`
+fi
+
+vault_addr=${VAULT_ADDR:-https://127.0.0.1:8200}
+
+unset http_proxy
+unset https_proxy
+
+######################################################################
+# Functions
+######################################################################
+
+usage(){
+  cat <<EOF
+  Usage: $0 [<options>]
+
+  --version             Show the version of this script
+  --help                Display this mess
+  --show-app-id         Output this application's app-id (for Vault auth to
+                        App ID auth backend)
+  --name                The name of the service for which credentials are
+                        required
+  --ip                  The IP address of the host for which credentials are
+                        required
+  --username            The username for which to generate credentials
+  --output              The file to write the credentials to
+
+EOF
+
+  exit 1
+}
+
+version(){
+  cat <<EOF
+  obtain-ssh-access verion $version
+
+EOF
+
+  exit 0
+}
+
+show_app_id(){
+  echo -n $app_id
+
+  exit 0
+}
+
+log(){ echo -e "\e[32m\e[1m--> ${1}...\e[0m"; }
+warn(){ echo -e "\e[33m\e[1mWARNING: ${1}\e[0m"; }
+error(){ echo -e "\e[31m\e[1mERROR: ${1}\e[0m"; }
+fatal(){ echo -e "\e[31m\e[1mFATAL: ${1}\e[0m"; return 1; }
+
+# clean up temporary files on exit
+cleanup(){
+  if [ -n "$WORKDIR" ] && [ -d "$WORKDIR" ]; then
+    rm -rf "$WORKDIR"
+  fi
+}
+trap cleanup EXIT
+
+######################################################################
+# Script start
+######################################################################
+
+PARSED_OPTIONS=$(getopt -n "$0" -o hvsn:i:u:o: --long "help,version,show-app-id,name:,ip:,username:,output:" -- "$@")
+
+if [ $? -ne 0 ]; then
+  usage
+fi
+
+eval set -- "$PARSED_OPTIONS"
+while true; do
+  case "$1" in
+    -h|--help)
+      usage;;
+    -v|--version)
+      version;;
+    -s|--show-app-id)
+      show_app_id;;
+    -n|--name)  # something like gerrit.netspot.com.au_29418
+      name=$2
+      shift 2;;
+    -i|--ip)
+      ip=$2
+      shift 2;;
+    -u|--username)
+      username=$2
+      shift 2;;
+    -o|--output)
+      output=$2
+      shift 2;;
+    --)
+      shift
+      break;;
+    *)
+      error "unknown option $1"
+      usage;;
+  esac
+done
+
+
+# log in to Vault
+vault_token=`curl \
+  -s \
+  -X POST \
+  -d "{\"app_id\":\"${app_id}\",\"user_id\":\"${user_id}\"}" \
+  ${vault_addr}/v1/auth/app-id/login \
+  | jq -r '.["auth"]["client_token"]' 2>/dev/null`
+
+if [ -z "${vault_token}" ]; then
+  fatal 'Unable to authenticate to Vault'
+fi
+
+# build the request for Vault
+creds_req="{\"ip\":\"${ip}\""
+
+if [ -n "$username" ]; then
+  creds_req="${creds_req},\"username\":\"${username}\""
+fi
+
+creds_req="${creds_req}}"
+
+creds_json=`curl \
+  -s \
+  -X POST \
+  -H "X-Vault-Token: ${vault_token}" \
+  -d "${creds_req}" \
+  ${vault_addr}/v1/ssh/creds/${name}`
+
+# parse response and write output
+key=`echo $creds_json | jq -r '.["data"]["key"]' 2>/dev/null`
+[ -n "$key" ] || fatal 'Unable to obtain new private key'
+
+if [ -z "$output" ]; then
+  echo "$key"
+else
+  log "Writing key to '$output'"
+  touch "$output"
+  chmod 0600 "$output"
+  echo "$key" > "$output"
+fi
+
+# log out of Vault
+curl \
+  -s \
+  -X POST \
+  -H "X-Vault-Token: ${vault_token}" \
+  ${vault_addr}/v1/auth/token/revoke/${vault_token}
