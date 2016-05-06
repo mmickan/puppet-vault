@@ -320,6 +320,3 @@ DEPENDENCIES
   rspec-system-puppet
   simplecov
   vagrant-wrapper
-
-BUNDLED WITH
-   1.10.5

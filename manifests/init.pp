@@ -12,21 +12,21 @@
 #
 # [*user*]
 #   String.  Username that vault will run as.
-#   Default: vault
+#   Default: root
 #
 # [*group*]
 #   String.  Group that vault will run as.
-#   Default: vault
+#   Default: root
 #
 # [*manage_user*]
 #   Boolean.  If set to true, this module will create the user if it doesn't
 #   already exist.
-#   Default: true
+#   Default: false
 #
 # [*manage_group*]
 #   Boolean.  If set to true, this module will create the group if it
 #   doesn't already exist.
-#   Default: true
+#   Default: false
 #
 # [*debug*]
 #   Boolean.  If true, this module will write the value of all variables to a
@@ -221,10 +221,10 @@
 #
 class vault(
   $version            = '0.4.0',
-  $user               = 'vault',
-  $group              = 'vault',
-  $manage_user        = true,
-  $manage_group       = true,
+  $user               = 'root',
+  $group              = 'root',
+  $manage_user        = false,
+  $manage_group       = false,
   $bin_dir            = '/usr/local/bin',
   $download_url       = undef,
   $download_url_base  = 'https://releases.hashicorp.com/vault',
@@ -237,7 +237,7 @@ class vault(
   $common_name        = 'vault',
   $alt_names          = ["IP:${::ipaddress}"],
   $admins             = [],
-  $init_style         = 'upstart',
+  $init_style         = $::vault::params::init_style,
   $config_file        = '/etc/vault/config.hcl',
   $backend            = 'file',
   $listener           = 'tcp',
@@ -267,7 +267,7 @@ class vault(
   $stats_host_prefix  = true,
   $lease_duration     = '168h',
   $rotate_frequency   = 'daily',
-) {
+) inherits vault::params {
 
   # validate inputs
   validate_re($version, '^\d+\.\d+\.\d+$', 'vault version is not valid')
@@ -278,7 +278,7 @@ class vault(
   validate_string($common_name)
   validate_array($alt_names)
   validate_array($admins)
-  validate_re($init_style, '^(upstart)$', 'vault init_style is not valid')
+  validate_re($init_style, '^(upstart|systemd)$', 'vault init_style is not valid')
   validate_absolute_path($config_file)
   validate_re($backend, '^(consul|etcd|zookeeper|s3|mysql|inmem|file)$', 'invalid vault backend')
   validate_re($listener, '^tcp$', 'invalid vault listener')

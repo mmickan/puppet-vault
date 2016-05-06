@@ -1,0 +1,15 @@
+[Unit]
+Description=Vault secret management service
+After=network.target
+
+[Service]
+User=<%= scope['vault::user'] %>
+Group=<%= scope['vault::group'] %>
+EnvironmentFile=-/etc/default/vault
+ExecStart=/bin/bash -c "export GOMAXPROCS=${GOMAXPROCS:-2}; exec <%= scope['vault::bin_dir'] %>/vault server -config <%= scope['vault::config_file'] %>"
+CapabilityBoundingSet=CAP_IPC_LOCK
+Restart=on-failure
+SyslogIdentifier=vault
+
+[Install]
+WantedBy=multi-user.target

@@ -35,20 +35,24 @@ class vault::config {
           File['/etc/init.d/vault'],
         ]
       }
+      'systemd': {
+        file { '/lib/systemd/system/vault.service':
+          mode    => '0444',
+          owner   => 'root',
+          group   => 'root',
+          content => template('vault/vault.systemd.erb'),
+        } ~>
+        exec { 'vault-systemd-reload':
+          command     => '/bin/systemctl daemon-reload',
+          refreshonly => true,
+        }
+        $bootstrap_requires = [
+          File['/lib/systemd/system/vault.service'],
+          Exec['vault-systemd-reload'],
+        ]
+      }
       # No templates yet for other init styles, but should be easy enough to
       # add (see the KyleAnderson/consul for a starting point)
-#     'systemd': {
-#       file { '/lib/systemd/system/vault.service':
-#         mode    => '0644',
-#         owner   => 'root',
-#         group   => 'root',
-#         content => template('vault/vault.systemd.erb'),
-#       } ~>
-#       exec { 'vault-systemd-reload':
-#         command     => '/usr/bin/systemctl daemon-reload',
-#         refreshonly => true,
-#       }
-#     }
 #     'sysv': {
 #       file { '/etc/init.d/vault':
 #         mode    => '0555',
