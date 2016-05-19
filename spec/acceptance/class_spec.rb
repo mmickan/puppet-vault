@@ -30,7 +30,7 @@ describe 'vault class' do
     end
 
     describe command('vault version') do
-      it { should return_stdout /Vault v0\.2\.0/ }
+      it { should return_stdout /Vault v0\.4\.0/ }
     end
 
     describe command('vault status') do

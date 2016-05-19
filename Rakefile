@@ -24,7 +24,7 @@ task :test => [
   :spec_standalone,
 ]
 
-ENV['BEAKER_set'] ||= 'ubuntu-14-04'
+ENV['BEAKER_set'] ||= 'ubuntu-server-1404-x64'
 desc 'Run acceptance tests'
 task :acceptance => [
   :spec_clean,

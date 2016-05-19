@@ -7,7 +7,7 @@
 #
 # [*version*]
 #   String.  Version of Vault to install.
-#   Default: 0.2.0
+#   Default: 0.4.0
 #   Valid values: \d+\.\d+\.\d+
 #
 # [*user*]
