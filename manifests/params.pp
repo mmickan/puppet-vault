@@ -19,6 +19,11 @@ class vault::params {
         $init_style = 'systemd'
       }
     }
+    'Debian': {
+      if versioncmp($::operatingsystemrelease, '8.0') >= 0 {
+        $init_style = 'systemd'
+      }
+    }
     default: {
       fail('Unsupported OS')
     }
