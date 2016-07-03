@@ -24,6 +24,13 @@ class vault::params {
         $init_style = 'systemd'
       }
     }
+    /^(CentOS|RedHat|Scientific)$/: {
+      if versioncmp($::operatingsystemrelease, '7.0') >= 0 {
+        $init_style = 'systemd'
+      } else {
+        fail('Unsupported OS')
+      }
+    }
     default: {
       fail('Unsupported OS')
     }
