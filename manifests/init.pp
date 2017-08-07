@@ -220,7 +220,7 @@
 #  include vault
 #
 class vault(
-  $version            = '0.4.0',
+  $version            = '0.7.3',
   $user               = 'root',
   $group              = 'root',
   $manage_user        = false,
