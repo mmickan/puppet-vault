@@ -1,6 +1,10 @@
-#vault
+==This respository has been archived==
 
-####Table of Contents
+This was written for a very early version of Vault and hasn't been updated for a long time.  You should consider using something like Vox Pupuli's excellent puppet -vault module, found at https://forge.puppet.com/modules/puppet/vault/readme instead.
+
+# vault
+
+#### Table of Contents
 
 1. [Overview](#overview)
 2. [Module Description - What vault does and why it is useful](#module-description)
@@ -13,7 +17,7 @@
 5. [Limitations - OS compatibility, etc.](#limitations)
 6. [Development - Guide for contributing to vault](#development)
 
-##Overview
+## Overview
 
 Deploy Hashicorp's [Vault](http://vaultproject.io).  Downloads and installs
 the software, writes the configuration file and manages initialisation, the
@@ -22,7 +26,7 @@ initial unseal, and mounting selected backends.
 Tested with Ubuntu 14.04, but should work on other systems with the addition
 of a suitable init script template.
 
-##Module Description
+## Module Description
 
 This module attempts to bring Vault into a usable state without human
 intervention, while maintaining a high level of security.  Unseal keys and
@@ -33,9 +37,9 @@ The optional bootstrap process sets up an SSL certificate authority and
 configures the PKI secret backend.  Future releases will add support for
 configuring other backends.
 
-##Setup
+## Setup
 
-###What [vault] affects
+### What [vault] affects
 
 * Installs Vault to /usr/local/bin/vault
 * Installs configuration to /etc/vault/
@@ -45,11 +49,11 @@ configuring other backends.
 * Encrypts and stores initial root token to admin users' home
     directories as ~/vault_initial_root_token
 
-###Setup Requirements **OPTIONAL**
+### Setup Requirements **OPTIONAL**
 
 Requires the nanlui/staging and puppetlabs/stdlib modules.
 
-###Beginning with [vault]
+### Beginning with [vault]
 
 Basic configuration -- including bootstrapping to an unsealed running
 instance -- requires one parameter, an array of admin usernames.  The users
@@ -69,16 +73,16 @@ class { 'vault':
 Ssh_authorized_key <||> -> Class['vault']
 ```
 
-##Usage
+## Usage
 
 Full documentation of parameters is included in the init.pp manifest file.
 
-##Reference
+## Reference
 
 Only the "vault" class should be instantiated directly - all other classes
 are private.
 
-##Limitations
+## Limitations
 
 Currently this module only supports Upstart, so it's mostly limited to
 Ubuntu.  Support for other operating systems and distributions should be a
@@ -87,7 +91,7 @@ simple matter; most of the basic structure is already in place.
 Automated tests use the file backend only.  The Consul backend is in active
 use, but other backends are not well tested.
 
-##Development
+## Development
 
 Contributions are welcome.  Open an
 [issue](https://github.com/mmickan/puppet-vault/issues) or
@@ -97,9 +101,9 @@ tests are appreciated with pull requests, but not a hard requirement.
 Please ensure your commit message clearly explains the problem your patch
 solves.
 
-##Contributors
+## Contributors
 
-Written by Mark Mickan <mark.mickan@blackboard.com>.
+Written by Mark Mickan <mark.mickan@articul-8.com>.
 
 Thanks to Kyle Anderson for the
 [KyleAnderson/consul](https://github.com/solarkennedy/puppet-consul) module,
