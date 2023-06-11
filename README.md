@@ -1,4 +1,4 @@
-==This respository has been archived==
+**This respository has been archived**
 
 This was written for a very early version of Vault and hasn't been updated for a long time.  You should consider using something like Vox Pupuli's excellent puppet -vault module, found at https://forge.puppet.com/modules/puppet/vault/readme instead.
 
